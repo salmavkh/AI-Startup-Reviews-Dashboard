@@ -11,3 +11,6 @@ __pycache__/
 
 # Folders
 /artifacts
+
+# env
+.env

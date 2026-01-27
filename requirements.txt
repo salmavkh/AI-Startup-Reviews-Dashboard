@@ -1,2 +1,9 @@
+streamlit
+pandas
 torch
 transformers
+safetensors
+bertopic
+python-dotenv
+groq
+sentence-transformers
