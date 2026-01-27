@@ -36,13 +36,19 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 st.write("")
 
-btn1, btn2 = st.columns(2)
+btn1, btn2, btn3 = st.columns(3)
+
 with btn1:
     if st.button("Analyze a Single Review", use_container_width=True):
         st.switch_page("pages/1_Analyze_Single.py")
+
 with btn2:
     if st.button("Analyze Multiple Reviews", use_container_width=True):
         st.switch_page("pages/2_Analyze_Multiple.py")
+
+with btn3:
+    if st.button("Search Online Reviews", use_container_width=True):
+        st.switch_page("pages/3_Search_Online.py")
 
 st.write("")
 st.write("")
