@@ -1,23 +1,21 @@
 import streamlit as st
+from inference.sentiment import predict_single  # <-- uses your local model
 
 st.set_page_config(page_title="Analyze a Single Review", page_icon="📝", layout="wide")
 
 st.markdown(
     """
     <style>
-      /* Smaller, not-bold titles */
       .field-title {
         font-size: 20px;
         font-weight: 400;
-        margin: 0 0 6px 0;   /* controls gap under title */
+        margin: 0 0 6px 0;
       }
 
-      /* Remove extra spacing above widgets inside columns */
       div[data-testid="stTextArea"], div[data-testid="stRadio"] {
-        margin-top: 0px;    /* controls gap between title and widget */
+        margin-top: 0px;
       }
 
-      /* Slightly reduce textarea “empty feel” */
       textarea {
         padding-top: 8px !important;
         padding-bottom: 8px !important;
@@ -27,16 +25,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Back button
 if st.button("← Back"):
     st.switch_page("app.py")
 
 st.header("Analyze a Single Review")
 
+# --- Session state ---
 if "single_submitted" not in st.session_state:
     st.session_state.single_submitted = False
 if "single_errors" not in st.session_state:
     st.session_state.single_errors = []
+if "single_result" not in st.session_state:
+    st.session_state.single_result = None  # (label, confidence, cluster)
 
+# --- Layout ---
 left, right = st.columns([3, 2], gap="large")
 
 with left:
@@ -45,7 +48,7 @@ with left:
         "Enter a review",
         placeholder="Type or paste a user review here...",
         height=130,
-        label_visibility="collapsed",  # <-- hide Streamlit label (reliable)
+        label_visibility="collapsed",
     )
 
 with right:
@@ -59,12 +62,15 @@ with right:
             "Cluster 4 (Deep Tech Researchers)",
         ],
         index=None,
-        label_visibility="collapsed",  # <-- hide Streamlit label (reliable)
+        label_visibility="collapsed",
     )
 
+# --- Submit + validation + inference ---
 with left:
     if st.button("Submit", type="primary"):
         st.session_state.single_errors = []
+        st.session_state.single_submitted = False
+        st.session_state.single_result = None
 
         review_ok = bool(review_text and review_text.strip())
         cluster_ok = cluster is not None
@@ -73,18 +79,27 @@ with left:
             st.session_state.single_errors.append(
                 "Please enter a review and select your AI startup cluster before submitting."
             )
-            st.session_state.single_submitted = False
         elif not review_ok:
             st.session_state.single_errors.append("Please enter a review before submitting.")
-            st.session_state.single_submitted = False
         elif not cluster_ok:
             st.session_state.single_errors.append("Please select your AI startup cluster before submitting.")
-            st.session_state.single_submitted = False
         else:
-            st.session_state.single_submitted = True
+            try:
+                label, conf = predict_single(review_text.strip())  # <-- sentiment inference
+                st.session_state.single_result = (label, conf, cluster)
+                st.session_state.single_submitted = True
+            except Exception as e:
+                st.session_state.single_errors.append(f"Sentiment model error: {e}")
 
+# --- Warnings ---
 for msg in st.session_state.single_errors:
     st.warning(msg)
 
-if st.session_state.single_submitted:
+# --- Results ---
+if st.session_state.single_submitted and st.session_state.single_result:
+    label, conf, chosen_cluster = st.session_state.single_result
+
     st.markdown("## Results")
+    st.write(f"**Cluster:** {chosen_cluster}")
+    st.write(f"**Sentiment:** {label}")
+    st.write(f"**Confidence:** {conf:.3f}")
