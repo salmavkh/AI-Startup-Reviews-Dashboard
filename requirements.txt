@@ -7,3 +7,7 @@ bertopic
 python-dotenv
 groq
 sentence-transformers
+apify-client
+google-play-scraper
+beautifulsoup4
+requests

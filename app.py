@@ -1,6 +1,11 @@
 # streamlit run app.py
 
 import streamlit as st
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env (restart required after editing .env)
+load_dotenv()
 
 st.set_page_config(
     page_title="AI Review Insights",

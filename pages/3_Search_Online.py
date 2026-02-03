@@ -1,5 +1,19 @@
 import streamlit as st
 
+from fetchers.google_play import search_google_play
+from fetchers.ios import search_ios
+from fetchers.g2 import search_g2
+from fetchers.trustpilot import search_trustpilot
+from inference.topic import predict_topic_batch
+from inference.sentiment import predict_single as predict_sentiment_single
+
+# Import refactored helpers
+from helpers.search_ui_helpers import (
+    fetch_reviews_for_ui, process_search_results, logo_html, render_result_card,
+    render_review_preview, render_analysis_results, extract_identifier_info, render_confirmed_company
+)
+from helpers.search_validation import validate_search_inputs, validate_submit_inputs, parse_pasted_link
+
 st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout="wide")
 
 # --- CSS (same vibe as your other pages) ---
@@ -7,7 +21,7 @@ st.markdown(
     """
     <style>
       .field-title {
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
@@ -17,12 +31,67 @@ st.markdown(
         margin-top: 0px;
       }
 
-      /* simple “card” look for results */
+      /* results heading (smaller than primary headings) */
+      .results-heading {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 0 10px 0;
+        color: #222;
+      }
+
+      /* compact card style for result tiles */
       .result-card {
-        border: 1px solid rgba(0,0,0,0.12);
-        border-radius: 12px;
-        padding: 12px 14px;
+        border: 1px solid rgba(0,0,0,0.10);
+        border-radius: 10px;
+        padding: 8px 10px;
         background: white;
+        margin-bottom: 8px;
+      }
+
+      /* selected state: stronger border + subtle lift */
+      .result-card.selected {
+        border: 2px solid #000000;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        padding: 7px 9px; /* account for thicker border */
+      }
+
+      /* small circular indicator shown for selected cards */
+      .result-card.selected::before {
+        content: '';
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #000;
+        display: inline-block;
+        margin-right: 10px;
+        vertical-align: middle;
+      }
+
+      .result-card img, .result-card svg {
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+        object-fit: cover;
+        display: block;
+      }
+
+      .result-card .name {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0;
+      }
+
+      .result-card .subtitle {
+        font-size: 12px;
+        color: #666;
+        margin-top: 2px;
+      }
+
+      /* smaller select buttons inside cards */
+      .result-card button {
+        padding: 6px 10px !important;
+        font-size: 13px !important;
+        border-radius: 8px !important;
       }
     </style>
     """,
@@ -45,14 +114,20 @@ defaults = {
     "search3_results": [],
     "search3_selected_result": None,
     "search3_pasted_link": "",
+    "search3_num_reviews": 20,
+    "search3_fetched_reviews": [],
+    "search3_confirmed_company": None,
+    "search3_fetched_for": {},
+    "search3_preview_analysis": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ---------------------------
-# Layout: left inputs, right results
-# ---------------------------
+
+# -----------------------------------------------------------------
+# Session state initialization
+# -----------------------------------------------------------------
 left, right = st.columns([3, 2], gap="large")
 
 # ---------------------------
@@ -76,6 +151,17 @@ with left:
     )
 
     st.write("")
+    st.markdown('<div class="field-title">How many reviews?</div>', unsafe_allow_html=True)
+    num_reviews = st.number_input(
+        "How many reviews?",
+        min_value=1,
+        max_value=100,
+        step=1,
+        value=st.session_state.get("search3_num_reviews", 20),
+        label_visibility="collapsed",
+    )
+
+    st.write("")
     st.markdown('<div class="field-title">What cluster is your company?</div>', unsafe_allow_html=True)
     cluster = st.radio(
         "What cluster is your company?",
@@ -92,17 +178,11 @@ with left:
     st.write("")
     if st.button("Search", type="primary"):
         st.session_state.search3_errors = []
+        st.session_state.search3_num_reviews = num_reviews
 
-        query_ok = bool(query and query.strip())
-        platform_ok = platform is not None
-        cluster_ok = cluster is not None
-
-        if not query_ok:
-            st.session_state.search3_errors.append("Please enter a company/app name before searching.")
-        if not platform_ok:
-            st.session_state.search3_errors.append("Please select a platform before searching.")
-        if not cluster_ok:
-            st.session_state.search3_errors.append("Please select your AI startup cluster before searching.")
+        # Validate inputs
+        errors = validate_search_inputs(query, platform, num_reviews, cluster)
+        st.session_state.search3_errors = errors
 
         if st.session_state.search3_errors:
             st.session_state.search3_search_clicked = False
@@ -110,24 +190,39 @@ with left:
             st.session_state.search3_selected_result = None
             st.session_state.search3_pasted_link = ""
         else:
-            # Mark that Search succeeded
             st.session_state.search3_search_clicked = True
+            st.session_state["cluster"] = cluster
 
-            # Reset selection state for a fresh search
             st.session_state.search3_selected_result = None
             st.session_state.search3_pasted_link = ""
 
-            # Placeholder results (replace later with real search)
-            # Keep this as up to 5 items to match your wireframe.
-            st.session_state.search3_results = [
-                {"id": "r1", "platform": platform, "name": "Company1", "subtitle": "Developer/Domain/Category", "logo": None},
-                {"id": "r2", "platform": platform, "name": "Company2", "subtitle": "Developer/Domain/Category", "logo": None},
-                {"id": "r3", "platform": platform, "name": "Company3", "subtitle": "Developer/Domain/Category", "logo": None},
-                {"id": "r4", "platform": platform, "name": "Company4", "subtitle": "Developer/Domain/Category", "logo": None},
-                {"id": "r5", "platform": platform, "name": "Company5", "subtitle": "Developer/Domain/Category", "logo": None},
-            ]
+            candidates = []
+            try:
+                if platform == "Google Play Store":
+                    candidates = search_google_play(query, limit=5)
+                elif platform == "iOS App Store":
+                    candidates = search_ios(query, limit=5)
+                elif platform == "G2":
+                    candidates = search_g2(query, limit=5)
+                elif platform == "Trustpilot":
+                    candidates = search_trustpilot(query, limit=5)
+            except Exception as e:
+                st.session_state.search3_errors.append(f"Search failed: {e}")
+                candidates = []
 
-# Validation warnings (same style as your other pages)
+            ui_candidates = process_search_results(candidates, platform)
+            st.session_state.search3_results = ui_candidates
+
+            if platform == "G2" and not any(r.get("g2_slug") and not r.get("unverified") for r in ui_candidates):
+                st.session_state.search3_errors.append(
+                    "G2 search is often JS-protected — results may be blocked.\n"
+                    "If you have the product page, paste the G2 product URL on the right. "
+                    "You can also set APIFY_API_TOKEN in your environment — the app will use a public actor by default if you don't set APIFY_ACTOR_ID."
+                )
+                st.info("G2 often blocks direct scraping. Paste the G2 product URL on the right (recommended). If you set APIFY_API_TOKEN the app will try a public Apify actor by default; set APIFY_ACTOR_ID to use your own actor.")
+                st.write("Example: https://www.g2.com/products/<product-slug>/reviews")
+
+# Validation warnings
 for msg in st.session_state.search3_errors:
     st.warning(msg)
 
@@ -136,69 +231,200 @@ for msg in st.session_state.search3_errors:
 # ---------------------------
 with right:
     if st.session_state.search3_search_clicked:
-        st.markdown("### Select your company from this possible results:")
+        st.markdown('<div class="results-heading">Select your company from these results:</div>', unsafe_allow_html=True)
 
         results = st.session_state.search3_results
 
-        # Build radio labels that include platform explicitly
-        # (Even though platform is chosen, this makes the UI self-explanatory.)
-        option_labels = []
-        id_by_label = {}
-        for r in results:
-            label = f"{r['platform']} — {r['name']} ({r['subtitle']})"
-            option_labels.append(label)
-            id_by_label[label] = r["id"]
+        cols_per_row = 2
+        rows = [results[i:i+cols_per_row] for i in range(0, len(results), cols_per_row)]
+        for row in rows:
+            cols = st.columns(len(row), gap="large")
+            for ix, r in enumerate(row):
+                render_result_card(r, ix, cols)
 
-        option_labels.append("None of those")
-
-        selection = st.radio(
-            "Select a result",
-            options=option_labels,
-            index=None,  # IMPORTANT: no default selection
-            label_visibility="collapsed",
-        )
-
-        # If user chose “None of those”, show paste link input
-        none_selected = (selection == "None of those")
+        none_choice = st.radio("", options=["None of those"], index=None, label_visibility="collapsed")
+        none_selected = (none_choice == "None of those") or (not results)
 
         if none_selected:
             st.markdown('<div class="field-title">Paste the app link here:</div>', unsafe_allow_html=True)
             st.session_state.search3_pasted_link = st.text_input(
                 "Paste the app link here",
-                placeholder="e.g. https://ca.trustpilot.com/review/ziplines.com",
+                placeholder="e.g. https://www.trustpilot.com/review/spotify.com",
                 label_visibility="collapsed",
                 value=st.session_state.search3_pasted_link,
             )
             st.session_state.search3_selected_result = None
-        else:
-            # Store selected result id (if any)
-            if selection is None:
-                st.session_state.search3_selected_result = None
-            else:
-                st.session_state.search3_selected_result = id_by_label.get(selection)
 
         st.write("")
         if st.button("Submit", type="primary"):
-            # Submit validation
-            submit_errors = []
-
-            picked_result = st.session_state.search3_selected_result is not None
-            pasted_link_ok = bool(st.session_state.search3_pasted_link and st.session_state.search3_pasted_link.strip())
-
-            if selection is None:
-                submit_errors.append("Please select one of the results, or choose 'None of those'.")
-            elif none_selected and not pasted_link_ok:
-                submit_errors.append("Please paste the app/company link before submitting.")
-            elif (not none_selected) and (not picked_result):
-                submit_errors.append("Please select a valid result before submitting.")
+            submit_errors = validate_submit_inputs(
+                st.session_state.search3_selected_result is not None,
+                st.session_state.search3_pasted_link
+            )
 
             if submit_errors:
                 for e in submit_errors:
                     st.warning(e)
                 st.session_state.search3_submit_clicked = False
             else:
-                st.session_state.search3_submit_clicked = True
+                st.session_state.search3_confirmed_company = None
 
-# Placeholder output
+                def _find_selected_result():
+                    sel = st.session_state.search3_selected_result
+                    if not sel:
+                        return None
+                    for rr in st.session_state.search3_results:
+                        if rr.get("id") == sel:
+                            return rr
+                    return None
+
+                confirmed = None
+                picked_result = st.session_state.search3_selected_result is not None
+                
+                if not picked_result:
+                    pasted = st.session_state.search3_pasted_link
+                    confirmed, errors = parse_pasted_link(platform, pasted)
+
+                    if errors:
+                        for e in errors:
+                            st.warning(e)
+                        st.session_state.search3_submit_clicked = False
+                        confirmed = None
+                else:
+                    sel = _find_selected_result()
+                    if not sel:
+                        st.warning("Selected result not found — please choose a result or paste a link.")
+                        st.session_state.search3_submit_clicked = False
+                        confirmed = None
+                    else:
+                        confirmed = sel.copy()
+                        confirmed["source"] = "selection"
+
+                if confirmed:
+                    st.session_state.search3_confirmed_company = confirmed
+                    st.session_state.search3_submit_clicked = True
+                else:
+                    st.session_state.search3_submit_clicked = False
+
+
+# ---------------------------
+# Confirmed company + preview fetch
+# ---------------------------
 if st.session_state.search3_submit_clicked:
-    st.markdown("## Results")
+    st.markdown("## Confirmed company")
+
+    confirmed = st.session_state.get("search3_confirmed_company")
+    if not confirmed:
+        st.info("No company confirmed — please select a result or paste a valid link and Submit.")
+    else:
+        render_confirmed_company(confirmed)
+
+        preview_limit = min(5, max(1, int(st.session_state.get("search3_num_reviews", 5))))
+
+        prev = st.session_state.get("search3_fetched_reviews") or []
+        prev_key = st.session_state.get("search3_fetched_for") or {}
+
+        identifier = extract_identifier_info(confirmed)
+        should_fetch_preview = True
+        if prev and prev_key.get("platform") == confirmed.get("platform") and prev_key.get("identifier") == (identifier[1] if identifier else None):
+            should_fetch_preview = False
+
+        if should_fetch_preview:
+            with st.spinner("Fetching a short review preview (up to 5)..."):
+                preview = fetch_reviews_for_ui(confirmed.get("platform"), confirmed, limit=preview_limit)
+
+            st.session_state.search3_fetched_reviews = preview or []
+            st.session_state.search3_fetched_for = {"platform": confirmed.get("platform"), "identifier": (identifier[1] if identifier else None)}
+            st.session_state.search3_preview_analysis = None
+
+        st.info("A short preview of reviews is shown below. You can run analysis on the preview, or fetch the full set of reviews you requested.")
+
+        fetched = st.session_state.get("search3_fetched_reviews") or []
+        platform = confirmed.get("platform")
+        
+        if not fetched:
+            if platform == "Google Play Store":
+                try:
+                    import google_play_scraper  # type: ignore
+                    gp_ok = True
+                except Exception:
+                    gp_ok = False
+
+                if not gp_ok:
+                    st.warning(
+                        "No reviews fetched — the `google_play_scraper` Python package is not available in this environment. "
+                        "Install it (`pip install google-play-scraper`) for reliable Play Store access, or paste a direct Play Store package/link."
+                    )
+                else:
+                    st.warning(
+                        "No reviews fetched — the Play Store likely returned no public reviews for that package from the requested storefront, "
+                        "or Google is blocking access from this host (rate-limiting / geo restrictions). Try a different storefront/package or paste a direct Play Store link."
+                    )
+
+            elif platform == "G2":
+                st.warning("No reviews fetched from G2. G2 often requires a renderer (Apify) for reliable scraping.")
+                st.caption("If you have an Apify actor, set APIFY_API_TOKEN + APIFY_ACTOR_ID in your environment and restart the app.")
+                if st.button("Try fallback scraping (best-effort)", key="g2_try_fallback"):
+                    with st.spinner("Attempting a best-effort G2 HTML/JSON-LD scrape..."):
+                        try:
+                            preview = fetch_reviews_for_ui(platform, confirmed, limit=preview_limit)
+                        except Exception:
+                            preview = []
+                        st.session_state.search3_fetched_reviews = preview or []
+                        st.session_state.search3_preview_analysis = None
+
+            elif platform == "Trustpilot":
+                st.warning("No reviews fetched from Trustpilot (likely blocked/no public reviews). Try a different slug like the domain shown in the Trustpilot URL.")
+                st.caption("Example: paste a full Trustpilot page like https://www.trustpilot.com/review/<domain>")
+
+                if st.button("Retry Trustpilot fetch", key="tp_retry"):
+                    with st.spinner("Retrying Trustpilot fetch (Next.js JSON)..."):
+                        try:
+                            preview = fetch_reviews_for_ui(platform, confirmed, limit=preview_limit)
+                        except Exception:
+                            preview = []
+                        st.session_state.search3_fetched_reviews = preview or []
+                        st.session_state.search3_preview_analysis = None
+
+            else:
+                st.warning("No reviews could be fetched for this company (platform may block scraping). Try pasting a direct product link or check your environment.")
+        else:
+            render_review_preview(fetched, platform)
+
+            cols = st.columns([1, 1, 2])
+            with cols[0]:
+                if st.button("Run topic + sentiment on preview", key="run_preview_analysis"):
+                    texts = [(r.get("content") or "").strip() for r in fetched]
+                    cluster_label = st.session_state.get("cluster")
+                    topic_res = None
+                    if not cluster_label:
+                        st.warning("Select a cluster on the left before running the topic model — sentiment will still run on the preview.")
+                    else:
+                        with st.spinner("Running topic model on preview..."):
+                            try:
+                                topic_res = predict_topic_batch(texts, cluster_label=cluster_label)
+                            except Exception as exc:
+                                st.error(f"Topic model failed: {exc}")
+                                topic_res = None
+
+                    with st.spinner("Running sentiment on preview..."):
+                        sentiments = [predict_sentiment_single(t or "") for t in texts]
+
+                    st.session_state.search3_preview_analysis = {"topic": topic_res, "sentiment": sentiments}
+
+            with cols[1]:
+                if st.button(f"Fetch {st.session_state.get('search3_num_reviews', 20)} reviews", key="fetch_full_reviews"):
+                    full_n = int(st.session_state.get("search3_num_reviews", 20))
+                    with st.spinner(f"Fetching up to {full_n} reviews (this may take a moment)..."):
+                        full = fetch_reviews_for_ui(platform, confirmed, limit=full_n)
+                    st.session_state.search3_fetched_reviews = full or []
+                    st.session_state.search3_preview_analysis = None
+                    st.success(f"Fetched {len(full or [])} reviews. You can now run analysis on the full set.")
+
+            with cols[2]:
+                st.write("\n")
+                st.caption("Reviews are cached for 30 minutes in the app session (except Trustpilot). No inference is run without your explicit action.")
+
+        analysis = st.session_state.get("search3_preview_analysis")
+        if analysis:
+            render_analysis_results(analysis)
