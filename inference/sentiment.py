@@ -4,13 +4,13 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 MODEL_DIR = "artifacts/roberta_sentiment/model"
 TOKENIZER_DIR = "artifacts/roberta_sentiment/tokenizer"
 
+# Trained config says: num_labels = 2, label_names = ["negative", "positive"]
 NEG_IDX = 0
-NEU_IDX = 1
-POS_IDX = 2
-NEUTRAL_POLICY = "ignore"  # or "to_negative"
+POS_IDX = 1
 
 _tokenizer = None
 _model = None
+
 
 def load_model():
     global _tokenizer, _model
@@ -23,7 +23,16 @@ def load_model():
     return _tokenizer, _model
 
 
-def predict_single(text: str):
+def predict_single(text: str, *, threshold: float = 0.5):
+    """
+    Returns: (label_str, confidence_float)
+
+    - label_str is "Positive" or "Negative"
+    - confidence is the probability of the predicted label
+
+    If you want an "Uncertain" outcome, raise `threshold` above 0.5
+    (e.g., 0.6 / 0.7) and treat below-threshold as uncertain.
+    """
     tokenizer, model = load_model()
 
     inputs = tokenizer(
@@ -35,17 +44,16 @@ def predict_single(text: str):
     )
 
     with torch.no_grad():
-        logits = model(**inputs).logits
-        probs = torch.softmax(logits, dim=-1).squeeze(0)
+        logits = model(**inputs).logits  # shape: [1, 2]
+        probs = torch.softmax(logits, dim=-1).squeeze(0)  # shape: [2]
 
     idx = int(torch.argmax(probs))
     conf = float(probs[idx])
 
+    # Optional "uncertain" gating (only if you actually want it)
+    if conf < threshold:
+        return "Uncertain", conf
+
     if idx == POS_IDX:
         return "Positive", conf
-    if idx == NEG_IDX:
-        return "Negative", conf
-
-    if NEUTRAL_POLICY == "to_negative":
-        return "Negative", float(probs[NEG_IDX])
-    return "Uncertain", conf
+    return "Negative", conf
