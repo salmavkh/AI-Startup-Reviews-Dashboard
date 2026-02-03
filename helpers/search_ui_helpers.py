@@ -155,6 +155,13 @@ def render_analysis_results(analysis: dict):
             unc += 1
     st.write(f"Positive: {pos} — Negative: {neg} — Uncertain: {unc}")
 
+    emo = analysis.get("emotion") or {}
+    emo_pct = emo.get("percentages") or {}
+    if emo_pct:
+        st.markdown("**Emotion distribution (percent of reviews)**")
+        for lbl, pct in emo_pct.items():
+            st.write(f"- {lbl}: {pct:.1f}%")
+
     st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
 
 

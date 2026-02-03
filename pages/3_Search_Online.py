@@ -6,6 +6,7 @@ from fetchers.g2 import search_g2
 from fetchers.trustpilot import search_trustpilot
 from inference.topic import predict_topic_batch
 from inference.sentiment import predict_single as predict_sentiment_single
+from inference.emotion import emotion_percentages
 
 # Import refactored helpers
 from helpers.search_ui_helpers import (
@@ -393,7 +394,7 @@ if st.session_state.search3_submit_clicked:
 
             cols = st.columns([1, 1, 2])
             with cols[0]:
-                if st.button("Run topic + sentiment on preview", key="run_preview_analysis"):
+                if st.button("Run topic + sentiment + emotion on current set", key="run_preview_analysis"):
                     texts = [(r.get("content") or "").strip() for r in fetched]
                     cluster_label = st.session_state.get("cluster")
                     topic_res = None
@@ -410,7 +411,15 @@ if st.session_state.search3_submit_clicked:
                     with st.spinner("Running sentiment on preview..."):
                         sentiments = [predict_sentiment_single(t or "") for t in texts]
 
-                    st.session_state.search3_preview_analysis = {"topic": topic_res, "sentiment": sentiments}
+                    with st.spinner("Running emotion analysis on current set..."):
+                        # Count-based distribution (argmax per review)
+                        emotions = emotion_percentages(texts, method="count")
+
+                    st.session_state.search3_preview_analysis = {
+                        "topic": topic_res,
+                        "sentiment": sentiments,
+                        "emotion": emotions,
+                    }
 
             with cols[1]:
                 if st.button(f"Fetch {st.session_state.get('search3_num_reviews', 20)} reviews", key="fetch_full_reviews"):
