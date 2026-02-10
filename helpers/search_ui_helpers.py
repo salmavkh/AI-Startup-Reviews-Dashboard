@@ -1,6 +1,13 @@
 """UI helper functions for search page."""
 
+import pandas as pd
+import random
 import streamlit as st
+
+try:
+    import altair as alt
+except Exception:  # pragma: no cover - optional dependency
+    alt = None
 
 # ===== Fetch helpers =====
 
@@ -158,9 +165,89 @@ def render_analysis_results(analysis: dict):
     emo = analysis.get("emotion") or {}
     emo_pct = emo.get("percentages") or {}
     if emo_pct:
-        st.markdown("**Emotion distribution (percent of reviews)**")
-        for lbl, pct in emo_pct.items():
-            st.write(f"- {lbl}: {pct:.1f}%")
+        st.markdown("**Emotion intensities (avg regression scores)**")
+
+        # Bar chart (top 10 for readability)
+        top_items = list(emo_pct.items())[:10]
+        if top_items:
+            df = pd.DataFrame(top_items, columns=["emotion", "score"])
+            if alt is not None:
+                chart = (
+                    alt.Chart(df)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                        x=alt.X("score:Q", title="Avg intensity"),
+                    )
+                )
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+
+        # List removed; chart is sufficient
+
+    # Per-review navigation + details (below bar chart)
+    reviews = analysis.get("reviews") or []
+    per_review = analysis.get("emotion_by_review") or []
+    if reviews and per_review and len(reviews) == len(per_review):
+        st.markdown("---\n### Per-review emotion (navigate)")
+
+        if "search3_review_idx" not in st.session_state:
+            st.session_state.search3_review_idx = 0
+
+        n = len(reviews)
+        st.session_state.search3_review_idx = max(0, min(st.session_state.search3_review_idx, n - 1))
+
+        nav_cols = st.columns([1, 1, 1, 2])
+        with nav_cols[0]:
+            if st.button("Prev review", key="review_prev"):
+                st.session_state.search3_review_idx = (st.session_state.search3_review_idx - 1) % n
+        with nav_cols[1]:
+            if st.button("Next review", key="review_next"):
+                st.session_state.search3_review_idx = (st.session_state.search3_review_idx + 1) % n
+        with nav_cols[2]:
+            if st.button("Random review", key="review_rand"):
+                st.session_state.search3_review_idx = random.randrange(0, n)
+        with nav_cols[3]:
+            st.caption(f"Review {st.session_state.search3_review_idx + 1} of {n}")
+
+        idx = st.session_state.search3_review_idx
+        r = reviews[idx]
+        dist = per_review[idx] or {}
+
+        title = r.get("title") or "(no title)"
+        content = (r.get("content") or "").strip()
+        rating = r.get("rating")
+        date = r.get("date") or ""
+        platform = r.get("platform") or ""
+
+        st.markdown(f"**{title}**")
+        meta = " · ".join([p for p in [platform, date, (f"{rating} ★" if rating is not None else None)] if p])
+        if meta:
+            st.caption(meta)
+        if content:
+            st.write(content)
+
+        if dist:
+            # Convert to percentages of total intensity for readability
+            total = sum(float(v) for v in dist.values()) or 1.0
+            shares = {k: (float(v) / total) * 100.0 for k, v in dist.items()}
+            top_items = sorted(shares.items(), key=lambda kv: -kv[1])[:10]
+
+            st.markdown("**Top 10 emotions (share of total intensity)**")
+            df = pd.DataFrame(top_items, columns=["emotion", "percent"])
+            if alt is not None:
+                chart = (
+                    alt.Chart(df)
+                    .mark_bar()
+                    .encode(
+                        y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                        x=alt.X("percent:Q", title="Share (%)"),
+                    )
+                )
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.bar_chart(df, x="emotion", y="percent", use_container_width=True)
 
     st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
 
