@@ -3,7 +3,9 @@ import pandas as pd
 
 from inference.sentiment import predict_single
 from inference.topic import predict_topic_batch
+from inference.emotion import emotion_percentages, predict_proba_single
 from inference.llm_topic_summary import llm_topic_summary
+from helpers.search_ui_helpers import render_analysis_results
 
 st.set_page_config(page_title="Analyze Multiple Reviews", page_icon="📄", layout="wide")
 
@@ -85,16 +87,20 @@ with left:
             try:
                 reviews = _read_reviews_csv(uploaded_file)
 
-                # ---- Sentiment (simple loop for now) ----
+                # ---- Sentiment (per-review + overall counts) ----
+                sentiments = [predict_single(r or "") for r in reviews]
                 pos = neg = unc = 0
-                for r in reviews:
-                    label, _conf = predict_single(r)
+                for label, _conf in sentiments:
                     if label.lower().startswith("pos"):
                         pos += 1
                     elif label.lower().startswith("neg"):
                         neg += 1
                     else:
                         unc += 1
+
+                # ---- Emotion (overall + per-review) ----
+                emotions = emotion_percentages(reviews, method="prob")
+                emotion_by_review = [predict_proba_single(r or "") for r in reviews]
 
                 # ---- Topic modelling (batch) ----
                 topic_batch = predict_topic_batch(reviews, cluster_label=cluster, top_k_words=10)
@@ -117,12 +123,29 @@ with left:
                 if top_topics_payload:
                     topic_summary_text = llm_topic_summary(cluster, top_topics_payload)
 
+                review_rows = [
+                    {
+                        "title": f"Review {i + 1}",
+                        "content": r,
+                        "rating": None,
+                        "date": "",
+                        "platform": "Uploaded CSV",
+                    }
+                    for i, r in enumerate(reviews)
+                ]
+
                 st.session_state.multi_result = {
                     "cluster": cluster,
                     "total": len(reviews),
-                    "sentiment": {"positive": pos, "negative": neg, "uncertain": unc},
-                    "topics": topic_batch,  # includes counts + keywords_by_topic
+                    "sentiment_counts": {"positive": pos, "negative": neg, "uncertain": unc},
                     "topic_summary": topic_summary_text,
+                    "analysis": {
+                        "topic": topic_batch,
+                        "sentiment": sentiments,
+                        "emotion": emotions,
+                        "emotion_by_review": emotion_by_review,
+                        "reviews": review_rows,
+                    },
                 }
 
             except Exception as e:
@@ -139,34 +162,14 @@ if st.session_state.multi_result:
     st.write(f"**Cluster:** {res['cluster']}")
     st.write(f"**Total reviews:** {total}")
 
-    st.subheader("Sentiment Analysis")
-    s = res["sentiment"]
-    st.write(f"**Positive:** {s['positive']} ({s['positive']/total:.1%})")
-    st.write(f"**Negative:** {s['negative']} ({s['negative']/total:.1%})")
-    st.write(f"**Uncertain:** {s['uncertain']} ({s['uncertain']/total:.1%})")
+    s = res["sentiment_counts"]
+    st.write(
+        f"**Sentiment quick stats:** Positive {s['positive']/total:.1%}, "
+        f"Negative {s['negative']/total:.1%}, Uncertain {s['uncertain']/total:.1%}"
+    )
 
-    st.subheader("Topic Modelling")
-    t = res["topics"]
-    counts = t["counts"]
-
-    # show top 5 topics by count (excluding -1 first)
-    items = [(tid, c) for tid, c in counts.items() if tid != -1]
-    items.sort(key=lambda x: x[1], reverse=True)
-
-    if not items:
-        st.write("No assigned topics (all reviews were outliers / unassigned).")
-    else:
-        st.write("Top topics (by count):")
-        for tid, c in items[:5]:
-            kws = t["keywords_by_topic"].get(tid, [])
-            st.write(f"- **Topic {tid}** — {c} ({c/total:.1%})")
-            if kws:
-                st.caption("Keywords: " + ", ".join(kws))
-
-    outliers = t.get("outlier_count", counts.get(-1, 0))
-    st.write(f"**Unassigned / Outliers (-1):** {outliers} ({outliers/total:.1%})")
+    render_analysis_results(res["analysis"])
 
     if res.get("topic_summary"):
         st.markdown("**LLM Summary**")
         st.write(res["topic_summary"])
-
