@@ -279,24 +279,22 @@ def render_analysis_results(analysis: dict):
 
             # Per-review emotion viz
             if dist:
-                total = sum(float(v) for v in dist.values()) or 1.0
-                shares = {k: (float(v) / total) * 100.0 for k, v in dist.items()}
-                top_items = sorted(shares.items(), key=lambda kv: -kv[1])[:10]
+                top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
 
                 st.markdown("**Emotion (this review)**")
-                df = pd.DataFrame(top_items, columns=["emotion", "percent"])
+                df = pd.DataFrame(top_items, columns=["emotion", "score"])
                 if alt is not None:
                     chart = (
                         alt.Chart(df)
                         .mark_bar()
                         .encode(
                             y=alt.Y("emotion:N", sort="-x", title="Emotion"),
-                            x=alt.X("percent:Q", title="Share (%)"),
+                            x=alt.X("score:Q", title="Score (0-1)"),
                         )
                     )
                     st.altair_chart(chart, use_container_width=True)
                 else:
-                    st.bar_chart(df, x="emotion", y="percent", use_container_width=True)
+                    st.bar_chart(df, x="emotion", y="score", use_container_width=True)
 
     st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
 

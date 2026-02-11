@@ -1,6 +1,8 @@
 import streamlit as st
+import pandas as pd
 
 from inference.sentiment import predict_single
+from inference.emotion import predict_proba_single
 from inference.topic import predict_topic_single
 from inference.llm_topic_label import llm_label_topic
 
@@ -84,10 +86,13 @@ with left:
                 # 1) Sentiment
                 sentiment_label, sentiment_conf = predict_single(text)
 
-                # 2) Topic (cluster-specific BERTopic)
+                # 2) Emotion
+                emotion_dist = predict_proba_single(text)
+
+                # 3) Topic (cluster-specific BERTopic)
                 topic_res = predict_topic_single(text, cluster_label=cluster, top_k_words=10)
 
-                # 3) LLM human label + explanation (Groq)
+                # 4) LLM human label + explanation (Groq)
                 llm_res = llm_label_topic(
                     cluster_label=cluster,
                     topic_id=topic_res["topic_id"],
@@ -98,6 +103,7 @@ with left:
                 st.session_state.single_result = {
                     "cluster": cluster,
                     "sentiment": {"label": sentiment_label, "confidence": sentiment_conf},
+                    "emotion": emotion_dist,
                     "topic": topic_res,
                     "topic_llm": llm_res,
                 }
@@ -113,11 +119,19 @@ if st.session_state.single_result:
     st.markdown("## Results")
     st.write(f"**Cluster:** {res['cluster']}")
 
-    st.subheader("Sentiment Analysis")
+    st.subheader("Sentiment")
     st.write(f"**Sentiment:** {res['sentiment']['label']}")
     st.write(f"**Confidence:** {res['sentiment']['confidence']:.3f}")
+    st.progress(max(0.0, min(1.0, float(res["sentiment"]["confidence"]))))
 
-    st.subheader("Topic Modelling")
+    st.subheader("Emotion")
+    dist = res.get("emotion") or {}
+    if dist:
+        top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
+        df = pd.DataFrame(top_items, columns=["emotion", "score"])
+        st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+
+    st.subheader("Topic")
     topic = res["topic"]
     if topic["is_outlier"]:
         st.write("**Topic:** Unassigned / Misc (outlier)")
