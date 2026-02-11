@@ -139,59 +139,58 @@ def render_review_preview(fetched: list, platform: str):
 def render_analysis_results(analysis: dict):
     """Render topic + sentiment analysis results."""
     st.markdown("---\n### Preview analysis")
-    # Sentiment
-    st.markdown("**Sentiment (per-review)**")
-    pos = neg = unc = 0
-    for s, conf in (analysis.get("sentiment") or []):
-        if s == "Positive":
-            pos += 1
-        elif s == "Negative":
-            neg += 1
-        else:
-            unc += 1
-    total = pos + neg + unc
-    if total > 0:
-        st.write(
-            f"Positive: {pos} ({pos/total:.1%}) — "
-            f"Negative: {neg} ({neg/total:.1%}) — "
-            f"Uncertain: {unc} ({unc/total:.1%})"
-        )
-    else:
-        st.write(f"Positive: {pos} — Negative: {neg} — Uncertain: {unc}")
+    tabs = st.tabs(["Overall Results", "Insights per Review"])
 
-    if total > 0:
-        df_sent = pd.DataFrame(
-            [
-                {"label": "Positive", "count": pos, "percent": (pos / total) * 100.0},
-                {"label": "Negative", "count": neg, "percent": (neg / total) * 100.0},
-                {"label": "Uncertain", "count": unc, "percent": (unc / total) * 100.0},
-            ]
-        )
-        if alt is not None:
-            pie = (
-                alt.Chart(df_sent)
-                .mark_arc()
-                .encode(
-                    theta=alt.Theta(field="count", type="quantitative"),
-                    color=alt.Color(field="label", type="nominal"),
-                    tooltip=["label", "count", alt.Tooltip("percent:Q", format=".1f")],
-                )
+    # --------------------
+    # Overall tab
+    # --------------------
+    with tabs[0]:
+        # Sentiment (overall)
+        st.markdown("**Sentiment (overall)**")
+        pos = neg = unc = 0
+        for s, conf in (analysis.get("sentiment") or []):
+            if s == "Positive":
+                pos += 1
+            elif s == "Negative":
+                neg += 1
+            else:
+                unc += 1
+
+        total = pos + neg + unc
+        if total > 0:
+            st.write(
+                f"Positive: {pos} ({pos/total:.1%}) — "
+                f"Negative: {neg} ({neg/total:.1%}) — "
+                f"Uncertain: {unc} ({unc/total:.1%})"
             )
-            st.altair_chart(pie, use_container_width=True)
+            df_sent = pd.DataFrame(
+                [
+                    {"label": "Positive", "count": pos, "percent": (pos / total) * 100.0},
+                    {"label": "Negative", "count": neg, "percent": (neg / total) * 100.0},
+                    {"label": "Uncertain", "count": unc, "percent": (unc / total) * 100.0},
+                ]
+            )
+            if alt is not None:
+                pie = (
+                    alt.Chart(df_sent)
+                    .mark_arc()
+                    .encode(
+                        theta=alt.Theta(field="count", type="quantitative"),
+                        color=alt.Color(field="label", type="nominal"),
+                        tooltip=["label", "count", alt.Tooltip("percent:Q", format=".1f")],
+                    )
+                )
+                st.altair_chart(pie, use_container_width=True)
+            else:
+                st.bar_chart(df_sent, x="label", y="count", use_container_width=True)
         else:
-            st.bar_chart(df_sent, x="label", y="count", use_container_width=True)
+            st.write("Positive: 0 — Negative: 0 — Uncertain: 0")
 
-    # Emotions (overall + per-review)
-    emo = analysis.get("emotion") or {}
-    emo_pct = emo.get("percentages") or {}
-    reviews = analysis.get("reviews") or []
-    per_review = analysis.get("emotion_by_review") or []
-
-    if emo_pct or (reviews and per_review and len(reviews) == len(per_review)):
-        st.markdown("---\n### Emotions")
-
+        # Emotions (overall)
+        emo = analysis.get("emotion") or {}
+        emo_pct = emo.get("percentages") or {}
         if emo_pct:
-            st.markdown("**Overall (avg regression scores)**")
+            st.markdown("**Emotion (overall)**")
             top_items = list(emo_pct.items())[:10]
             if top_items:
                 df = pd.DataFrame(top_items, columns=["emotion", "score"])
@@ -210,9 +209,30 @@ def render_analysis_results(analysis: dict):
         else:
             st.caption("No overall emotion distribution to show yet.")
 
-        if reviews and per_review and len(reviews) == len(per_review):
-            st.markdown("**Per review (navigate)**")
+        # Topic (overall)
+        t = analysis.get("topic") or {}
+        counts = t.get("counts") or {}
+        keywords = t.get("keywords_by_topic") or {}
+        if counts:
+            st.markdown("**Topic (overall)**")
+            for topic_id, cnt in sorted(counts.items(), key=lambda kv: -kv[1]):
+                if topic_id == -1:
+                    lbl = "(outliers)"
+                else:
+                    lbl = f"Topic {topic_id} — {', '.join(keywords.get(topic_id, [])[:5])}"
+                st.write(f"- {lbl}: {cnt}")
 
+    # --------------------
+    # Per-review tab
+    # --------------------
+    with tabs[1]:
+        reviews = analysis.get("reviews") or []
+        per_review = analysis.get("emotion_by_review") or []
+        sentiments = analysis.get("sentiment") or []
+
+        if not reviews or not per_review or len(reviews) != len(per_review):
+            st.caption("No per-review emotion details to show yet.")
+        else:
             if "search3_review_idx" not in st.session_state:
                 st.session_state.search3_review_idx = 0
 
@@ -249,12 +269,21 @@ def render_analysis_results(analysis: dict):
             if content:
                 st.write(content)
 
+            # Per-review sentiment viz
+            if idx < len(sentiments):
+                s_label, s_conf = sentiments[idx]
+                s_conf = float(s_conf)
+                st.markdown("**Sentiment (this review)**")
+                st.write(f"{s_label}: {s_conf:.1%}")
+                st.progress(max(0.0, min(1.0, s_conf)))
+
+            # Per-review emotion viz
             if dist:
                 total = sum(float(v) for v in dist.values()) or 1.0
                 shares = {k: (float(v) / total) * 100.0 for k, v in dist.items()}
                 top_items = sorted(shares.items(), key=lambda kv: -kv[1])[:10]
 
-                st.markdown("**Top 10 emotions (share of total intensity)**")
+                st.markdown("**Emotion (this review)**")
                 df = pd.DataFrame(top_items, columns=["emotion", "percent"])
                 if alt is not None:
                     chart = (
@@ -268,22 +297,6 @@ def render_analysis_results(analysis: dict):
                     st.altair_chart(chart, use_container_width=True)
                 else:
                     st.bar_chart(df, x="emotion", y="percent", use_container_width=True)
-        else:
-            st.caption("No per-review emotion details to show yet.")
-
-    # Topic section at bottom
-    t = analysis.get("topic") or {}
-    counts = t.get("counts") or {}
-    keywords = t.get("keywords_by_topic") or {}
-
-    if counts:
-        st.markdown("**Topic counts (preview)**")
-        for topic_id, cnt in sorted(counts.items(), key=lambda kv: -kv[1]):
-            if topic_id == -1:
-                lbl = "(outliers)"
-            else:
-                lbl = f"Topic {topic_id} — {', '.join(keywords.get(topic_id, [])[:5])}"
-            st.write(f"- {lbl}: {cnt}")
 
     st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
 
