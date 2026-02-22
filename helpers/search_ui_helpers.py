@@ -212,6 +212,70 @@ def render_analysis_results(analysis: dict):
                 mcols[2].metric("Valence std", f"{std_val:.3f}")
                 mcols[3].metric("Arousal std", f"{std_aro:.3f}")
 
+                iqr_val = float(emo_va.get("iqr_valence", 0.0))
+                iqr_aro = float(emo_va.get("iqr_arousal", 0.0))
+                min_val = float(emo_va.get("min_valence", 0.0))
+                max_val = float(emo_va.get("max_valence", 0.0))
+                min_aro = float(emo_va.get("min_arousal", 0.0))
+                max_aro = float(emo_va.get("max_arousal", 0.0))
+                mean_dist = float(emo_va.get("mean_distance", 0.0))
+                scols = st.columns(3)
+                scols[0].metric("Valence IQR", f"{iqr_val:.3f}")
+                scols[1].metric("Arousal IQR", f"{iqr_aro:.3f}")
+                scols[2].metric("Mean intensity", f"{mean_dist:.3f}")
+                st.caption(
+                    f"Valence range: [{min_val:.3f}, {max_val:.3f}] · "
+                    f"Arousal range: [{min_aro:.3f}, {max_aro:.3f}]"
+                )
+
+                polarity = emo_va.get("polarity_split") or {}
+                activation = emo_va.get("activation_split") or {}
+                p_df = pd.DataFrame(
+                    [
+                        {"bucket": "Positive", "percent": float(polarity.get("positive_pct", 0.0))},
+                        {"bucket": "Neutral", "percent": float(polarity.get("neutral_pct", 0.0))},
+                        {"bucket": "Negative", "percent": float(polarity.get("negative_pct", 0.0))},
+                    ]
+                )
+                a_df = pd.DataFrame(
+                    [
+                        {"bucket": "High arousal", "percent": float(activation.get("high_pct", 0.0))},
+                        {"bucket": "Mid arousal", "percent": float(activation.get("mid_pct", 0.0))},
+                        {"bucket": "Calm", "percent": float(activation.get("calm_pct", 0.0))},
+                    ]
+                )
+                split_cols = st.columns(2)
+                with split_cols[0]:
+                    st.markdown("Polarity split")
+                    if alt is not None:
+                        p_chart = (
+                            alt.Chart(p_df)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X("bucket:N", title=None),
+                                y=alt.Y("percent:Q", title="Share (%)"),
+                                tooltip=["bucket", alt.Tooltip("percent:Q", format=".1f")],
+                            )
+                        )
+                        st.altair_chart(p_chart, use_container_width=True)
+                    else:
+                        st.bar_chart(p_df, x="bucket", y="percent", use_container_width=True)
+                with split_cols[1]:
+                    st.markdown("Activation split")
+                    if alt is not None:
+                        a_chart = (
+                            alt.Chart(a_df)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X("bucket:N", title=None),
+                                y=alt.Y("percent:Q", title="Share (%)"),
+                                tooltip=["bucket", alt.Tooltip("percent:Q", format=".1f")],
+                            )
+                        )
+                        st.altair_chart(a_chart, use_container_width=True)
+                    else:
+                        st.bar_chart(a_df, x="bucket", y="percent", use_container_width=True)
+
                 quad_pct = emo_va.get("quadrant_percentages") or {}
                 if quad_pct:
                     q_df = pd.DataFrame(list(quad_pct.items()), columns=["quadrant", "percent"])
@@ -228,6 +292,29 @@ def render_analysis_results(analysis: dict):
                         st.altair_chart(q_chart, use_container_width=True)
                     else:
                         st.bar_chart(q_df, x="quadrant", y="percent", use_container_width=True)
+
+                # Short interpretation to prevent "mean near 0 = neutral" misread.
+                interp = []
+                if abs(mean_val) <= 0.10 and std_val >= 0.30:
+                    interp.append("Valence mean is near 0, but spread is high, indicating mixed positive and negative reactions.")
+                elif mean_val > 0.10:
+                    interp.append("Overall valence trends positive.")
+                elif mean_val < -0.10:
+                    interp.append("Overall valence trends negative.")
+                else:
+                    interp.append("Overall valence appears close to neutral with modest spread.")
+
+                if mean_dist >= 0.55:
+                    interp.append("Emotional intensity is high on average.")
+                elif mean_dist >= 0.30:
+                    interp.append("Emotional intensity is moderate on average.")
+                else:
+                    interp.append("Emotional intensity is generally low.")
+
+                high_pct = float(activation.get("high_pct", 0.0))
+                if high_pct >= 40.0:
+                    interp.append("A large share of reviews are high-arousal.")
+                st.info(" ".join(interp))
 
             if emo_pct:
                 st.markdown("Discrete emotion")

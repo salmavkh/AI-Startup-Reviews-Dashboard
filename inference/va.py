@@ -1,5 +1,6 @@
 import os
 import statistics
+import math
 
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -86,6 +87,23 @@ def _quadrant(valence: float, arousal: float, threshold: float = 0.0) -> str:
     return "LVLA"
 
 
+def _percentile(sorted_values: list[float], p: float) -> float:
+    """Linear interpolation percentile with p in [0, 1]."""
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    p = max(0.0, min(1.0, float(p)))
+    idx = p * (len(sorted_values) - 1)
+    lo = int(math.floor(idx))
+    hi = int(math.ceil(idx))
+    if lo == hi:
+        return float(sorted_values[lo])
+    frac = idx - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
 def predict_va_single(text: str, *, max_length: int = 256) -> dict[str, float | str]:
     tokenizer, model, label_names = load_model()
 
@@ -120,11 +138,24 @@ def summarize_va(per_review: list[dict]) -> dict:
             "mean_arousal": 0.0,
             "std_valence": 0.0,
             "std_arousal": 0.0,
+            "min_valence": 0.0,
+            "max_valence": 0.0,
+            "min_arousal": 0.0,
+            "max_arousal": 0.0,
+            "iqr_valence": 0.0,
+            "iqr_arousal": 0.0,
+            "polarity_split": {"positive_pct": 0.0, "negative_pct": 0.0, "neutral_pct": 0.0},
+            "activation_split": {"high_pct": 0.0, "mid_pct": 0.0, "calm_pct": 0.0},
+            "mean_distance": 0.0,
             "quadrants": {},
+            "quadrant_percentages": {},
         }
 
     valences = [float(x.get("valence", 0.0)) for x in cleaned]
     arousals = [float(x.get("arousal", 0.0)) for x in cleaned]
+    sorted_v = sorted(valences)
+    sorted_a = sorted(arousals)
+
     quadrants: dict[str, int] = {}
     for x in cleaned:
         q = str(x.get("quadrant", ""))
@@ -134,6 +165,24 @@ def summarize_va(per_review: list[dict]) -> dict:
     quad_percentages = {
         k: (v / total) * 100.0 for k, v in sorted(quadrants.items(), key=lambda kv: -kv[1])
     }
+    v_q25 = _percentile(sorted_v, 0.25)
+    v_q75 = _percentile(sorted_v, 0.75)
+    a_q25 = _percentile(sorted_a, 0.25)
+    a_q75 = _percentile(sorted_a, 0.75)
+
+    neutral_band = 0.10
+    high_arousal_threshold = 0.20
+    calm_arousal_threshold = 0.0
+
+    pos_count = sum(1 for v in valences if v > neutral_band)
+    neg_count = sum(1 for v in valences if v < -neutral_band)
+    neu_count = total - pos_count - neg_count
+
+    high_count = sum(1 for a in arousals if a > high_arousal_threshold)
+    calm_count = sum(1 for a in arousals if a <= calm_arousal_threshold)
+    mid_count = total - high_count - calm_count
+
+    distances = [math.sqrt((v * v) + (a * a)) for v, a in zip(valences, arousals)]
 
     return {
         "total": total,
@@ -141,6 +190,23 @@ def summarize_va(per_review: list[dict]) -> dict:
         "mean_arousal": float(statistics.fmean(arousals)),
         "std_valence": float(statistics.pstdev(valences)) if total > 1 else 0.0,
         "std_arousal": float(statistics.pstdev(arousals)) if total > 1 else 0.0,
+        "min_valence": float(sorted_v[0]),
+        "max_valence": float(sorted_v[-1]),
+        "min_arousal": float(sorted_a[0]),
+        "max_arousal": float(sorted_a[-1]),
+        "iqr_valence": float(v_q75 - v_q25),
+        "iqr_arousal": float(a_q75 - a_q25),
+        "polarity_split": {
+            "positive_pct": (pos_count / total) * 100.0,
+            "negative_pct": (neg_count / total) * 100.0,
+            "neutral_pct": (neu_count / total) * 100.0,
+        },
+        "activation_split": {
+            "high_pct": (high_count / total) * 100.0,
+            "mid_pct": (mid_count / total) * 100.0,
+            "calm_pct": (calm_count / total) * 100.0,
+        },
+        "mean_distance": float(statistics.fmean(distances)),
         "quadrants": quadrants,
         "quadrant_percentages": quad_percentages,
     }
