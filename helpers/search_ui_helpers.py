@@ -186,28 +186,68 @@ def render_analysis_results(analysis: dict):
         else:
             st.write("Positive: 0 — Negative: 0 — Uncertain: 0")
 
-        # Emotions (overall)
+        # Emotions (overall): supports both legacy and nested format
         emo = analysis.get("emotion") or {}
-        emo_pct = emo.get("percentages") or {}
-        if emo_pct:
-            st.markdown("**Emotion (overall)**")
-            top_items = list(emo_pct.items())[:10]
-            if top_items:
-                df = pd.DataFrame(top_items, columns=["emotion", "score"])
-                if alt is not None:
-                    chart = (
-                        alt.Chart(df)
-                        .mark_bar()
-                        .encode(
-                            y=alt.Y("emotion:N", sort="-x", title="Emotion"),
-                            x=alt.X("score:Q", title="Avg intensity"),
-                        )
-                    )
-                    st.altair_chart(chart, use_container_width=True)
-                else:
-                    st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+        if isinstance(emo, dict) and isinstance(emo.get("discrete"), dict):
+            emo_discrete = emo.get("discrete") or {}
+            emo_va = emo.get("va") or {}
         else:
-            st.caption("No overall emotion distribution to show yet.")
+            emo_discrete = emo if isinstance(emo, dict) else {}
+            emo_va = {}
+
+        emo_pct = emo_discrete.get("percentages") or {}
+        has_emo_overall = bool(emo_va or emo_pct)
+        if has_emo_overall:
+            st.markdown("**Emotion (overall)**")
+
+            if emo_va:
+                st.markdown("VA")
+                mean_val = float(emo_va.get("mean_valence", 0.0))
+                mean_aro = float(emo_va.get("mean_arousal", 0.0))
+                std_val = float(emo_va.get("std_valence", 0.0))
+                std_aro = float(emo_va.get("std_arousal", 0.0))
+                mcols = st.columns(4)
+                mcols[0].metric("Mean valence", f"{mean_val:.3f}")
+                mcols[1].metric("Mean arousal", f"{mean_aro:.3f}")
+                mcols[2].metric("Valence std", f"{std_val:.3f}")
+                mcols[3].metric("Arousal std", f"{std_aro:.3f}")
+
+                quad_pct = emo_va.get("quadrant_percentages") or {}
+                if quad_pct:
+                    q_df = pd.DataFrame(list(quad_pct.items()), columns=["quadrant", "percent"])
+                    if alt is not None:
+                        q_chart = (
+                            alt.Chart(q_df)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X("quadrant:N", title="VA quadrant"),
+                                y=alt.Y("percent:Q", title="Share (%)"),
+                                tooltip=["quadrant", alt.Tooltip("percent:Q", format=".1f")],
+                            )
+                        )
+                        st.altair_chart(q_chart, use_container_width=True)
+                    else:
+                        st.bar_chart(q_df, x="quadrant", y="percent", use_container_width=True)
+
+            if emo_pct:
+                st.markdown("Discrete emotion")
+                top_items = list(emo_pct.items())[:10]
+                if top_items:
+                    df = pd.DataFrame(top_items, columns=["emotion", "score"])
+                    if alt is not None:
+                        chart = (
+                            alt.Chart(df)
+                            .mark_bar()
+                            .encode(
+                                y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                                x=alt.X("score:Q", title="Avg intensity"),
+                            )
+                        )
+                        st.altair_chart(chart, use_container_width=True)
+                    else:
+                        st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+        else:
+            st.caption("No overall emotion analysis to show yet.")
 
         # Topic (overall)
         t = analysis.get("topic") or {}
@@ -230,7 +270,16 @@ def render_analysis_results(analysis: dict):
         per_review = analysis.get("emotion_by_review") or []
         sentiments = analysis.get("sentiment") or []
 
-        if not reviews or not per_review or len(reviews) != len(per_review):
+        if isinstance(per_review, dict):
+            per_review_discrete = per_review.get("discrete") or []
+            per_review_va = per_review.get("va") or []
+        else:
+            per_review_discrete = per_review or []
+            per_review_va = []
+
+        has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
+        has_va = bool(reviews and len(per_review_va) == len(reviews))
+        if not reviews or (not has_discrete and not has_va):
             st.caption("No per-review emotion details to show yet.")
         else:
             if "search3_review_idx" not in st.session_state:
@@ -254,7 +303,8 @@ def render_analysis_results(analysis: dict):
 
             idx = st.session_state.search3_review_idx
             r = reviews[idx]
-            dist = per_review[idx] or {}
+            dist = (per_review_discrete[idx] or {}) if has_discrete else {}
+            va_point = (per_review_va[idx] or {}) if has_va else {}
 
             title = r.get("title") or "(no title)"
             content = (r.get("content") or "").strip()
@@ -278,23 +328,35 @@ def render_analysis_results(analysis: dict):
                 st.progress(max(0.0, min(1.0, s_conf)))
 
             # Per-review emotion viz
-            if dist:
-                top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
-
+            if dist or va_point:
                 st.markdown("**Emotion (this review)**")
-                df = pd.DataFrame(top_items, columns=["emotion", "score"])
-                if alt is not None:
-                    chart = (
-                        alt.Chart(df)
-                        .mark_bar()
-                        .encode(
-                            y=alt.Y("emotion:N", sort="-x", title="Emotion"),
-                            x=alt.X("score:Q", title="Score (0-1)"),
+
+                if va_point:
+                    st.markdown("VA")
+                    v = float(va_point.get("valence", 0.0))
+                    a = float(va_point.get("arousal", 0.0))
+                    q = str(va_point.get("quadrant", ""))
+                    vcols = st.columns(3)
+                    vcols[0].metric("Valence", f"{v:.3f}")
+                    vcols[1].metric("Arousal", f"{a:.3f}")
+                    vcols[2].metric("Quadrant", q or "N/A")
+
+                if dist:
+                    top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
+                    st.markdown("Discrete emotion")
+                    df = pd.DataFrame(top_items, columns=["emotion", "score"])
+                    if alt is not None:
+                        chart = (
+                            alt.Chart(df)
+                            .mark_bar()
+                            .encode(
+                                y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                                x=alt.X("score:Q", title="Score (0-1)"),
+                            )
                         )
-                    )
-                    st.altair_chart(chart, use_container_width=True)
-                else:
-                    st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+                        st.altair_chart(chart, use_container_width=True)
+                    else:
+                        st.bar_chart(df, x="emotion", y="score", use_container_width=True)
 
     st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
 

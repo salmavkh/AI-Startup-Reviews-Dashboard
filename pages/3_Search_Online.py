@@ -7,6 +7,7 @@ from fetchers.trustpilot import search_trustpilot
 from inference.topic import predict_topic_batch
 from inference.sentiment import predict_single as predict_sentiment_single
 from inference.emotion import emotion_percentages, predict_proba_single
+from inference.va import predict_va_single, summarize_va
 
 # Import refactored helpers
 from helpers.search_ui_helpers import (
@@ -412,15 +413,25 @@ if st.session_state.search3_submit_clicked:
                         sentiments = [predict_sentiment_single(t or "") for t in texts]
 
                     with st.spinner("Running emotion analysis on current set..."):
-                        # Average probabilities across reviews (overall tone)
-                        emotions = emotion_percentages(texts, method="prob")
-                        emotion_by_review = [predict_proba_single(t or "") for t in texts]
+                        # 1) VA regression
+                        va_by_review = [predict_va_single(t or "") for t in texts]
+                        va_overall = summarize_va(va_by_review)
+
+                        # 2) Discrete emotion distribution
+                        discrete_overall = emotion_percentages(texts, method="prob")
+                        discrete_by_review = [predict_proba_single(t or "") for t in texts]
 
                     st.session_state.search3_preview_analysis = {
                         "topic": topic_res,
                         "sentiment": sentiments,
-                        "emotion": emotions,
-                        "emotion_by_review": emotion_by_review,
+                        "emotion": {
+                            "va": va_overall,
+                            "discrete": discrete_overall,
+                        },
+                        "emotion_by_review": {
+                            "va": va_by_review,
+                            "discrete": discrete_by_review,
+                        },
                         "reviews": fetched,
                     }
 
