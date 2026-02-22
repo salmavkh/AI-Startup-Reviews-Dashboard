@@ -1,5 +1,7 @@
 """UI helper functions for search page."""
 
+import math
+import os
 import pandas as pd
 import random
 import streamlit as st
@@ -8,6 +10,174 @@ try:
     import altair as alt
 except Exception:  # pragma: no cover - optional dependency
     alt = None
+
+EMOTWEET_28 = [
+    "admiration",
+    "amusement",
+    "anger",
+    "annoyance",
+    "approval",
+    "caring",
+    "confusion",
+    "curiosity",
+    "desire",
+    "disappointment",
+    "disapproval",
+    "disgust",
+    "embarrassment",
+    "excitement",
+    "fear",
+    "gratitude",
+    "grief",
+    "joy",
+    "love",
+    "nervousness",
+    "optimism",
+    "pride",
+    "realization",
+    "relief",
+    "remorse",
+    "sadness",
+    "surprise",
+    "neutral",
+]
+
+NRC_VAD_LEXICON_PATH = os.path.join(
+    "lexicon", "NRC-VAD-Lexicon-v2.1", "NRC-VAD-Lexicon-v2.1.txt"
+)
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _short_text(text: str, limit: int = 220) -> str:
+    s = str(text or "").strip()
+    return s if len(s) <= limit else (s[:limit] + "...")
+
+
+def _find_key_in_obj(obj, key_name: str):
+    if isinstance(obj, dict):
+        if key_name in obj:
+            return obj.get(key_name)
+        for v in obj.values():
+            found = _find_key_in_obj(v, key_name)
+            if found is not None:
+                return found
+        return None
+    if isinstance(obj, list):
+        for item in obj:
+            found = _find_key_in_obj(item, key_name)
+            if found is not None:
+                return found
+    return None
+
+
+def _extract_selected_review_idx(event_state) -> int | None:
+    """Extract clicked review index from an Altair selection event."""
+    if event_state is None:
+        return None
+
+    selection = getattr(event_state, "selection", None)
+    if selection is None and isinstance(event_state, dict):
+        selection = event_state.get("selection")
+    if selection is None:
+        return None
+
+    direct = selection.get("review_pick") if isinstance(selection, dict) else None
+    if isinstance(direct, dict):
+        if "review_idx" in direct:
+            try:
+                return int(direct["review_idx"])
+            except Exception:
+                pass
+        value = direct.get("value")
+        if isinstance(value, list) and value:
+            first = value[0]
+            if isinstance(first, dict) and "review_idx" in first:
+                try:
+                    return int(first["review_idx"])
+                except Exception:
+                    pass
+    elif isinstance(direct, list) and direct:
+        first = direct[0]
+        if isinstance(first, dict) and "review_idx" in first:
+            try:
+                return int(first["review_idx"])
+            except Exception:
+                pass
+
+    value = _find_key_in_obj(selection, "review_idx")
+    if isinstance(value, list) and value:
+        value = value[0]
+    if isinstance(value, dict):
+        value = value.get("review_idx")
+
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _load_emotweet28_va_points():
+    if not os.path.exists(NRC_VAD_LEXICON_PATH):
+        return [], list(EMOTWEET_28)
+
+    lookup: dict[str, tuple[float, float]] = {}
+    try:
+        df = pd.read_csv(NRC_VAD_LEXICON_PATH, sep="\t")
+    except Exception:
+        return [], list(EMOTWEET_28)
+
+    required = {"term", "valence", "arousal"}
+    if not required.issubset(set(df.columns)):
+        return [], list(EMOTWEET_28)
+
+    for _, row in df.iterrows():
+        term = str(row["term"]).strip().lower()
+        if term and term not in lookup:
+            lookup[term] = (_safe_float(row["valence"]), _safe_float(row["arousal"]))
+
+    points = []
+    missing = []
+    for emotion in EMOTWEET_28:
+        if emotion in lookup:
+            v, a = lookup[emotion]
+            points.append({"emotion": emotion, "valence": v, "arousal": a})
+        else:
+            missing.append(emotion)
+
+    return points, missing
+
+
+def _build_emotion_distance_rows(valence: float, arousal: float):
+    points, missing = _load_emotweet28_va_points()
+    rows = []
+    for p in points:
+        ev = _safe_float(p.get("valence"))
+        ea = _safe_float(p.get("arousal"))
+        d = math.sqrt((valence - ev) ** 2 + (arousal - ea) ** 2)
+        rows.append(
+            {
+                "emotion": p.get("emotion"),
+                "emotion_valence": ev,
+                "emotion_arousal": ea,
+                "review_valence": valence,
+                "review_arousal": arousal,
+                "distance": d,
+            }
+        )
+
+    rows.sort(key=lambda x: x["distance"])
+    for i, row in enumerate(rows):
+        row["rank"] = i + 1
+        row["is_top10"] = i < 10
+
+    return rows, missing
 
 # ===== Fetch helpers =====
 
@@ -141,14 +311,36 @@ def render_analysis_results(analysis: dict):
     st.markdown("---\n### Preview analysis")
     tabs = st.tabs(["Overall Results", "Insights per Review"])
 
+    reviews = analysis.get("reviews") or []
+    sentiments = analysis.get("sentiment") or []
+
+    per_review = analysis.get("emotion_by_review") or []
+    if isinstance(per_review, dict):
+        per_review_discrete = per_review.get("discrete") or []
+        per_review_va = per_review.get("va") or []
+    else:
+        per_review_discrete = per_review or []
+        per_review_va = []
+
+    has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
+    has_va = bool(reviews and len(per_review_va) == len(reviews))
+
+    # Emotions: supports both legacy and nested format
+    emo = analysis.get("emotion") or {}
+    if isinstance(emo, dict) and isinstance(emo.get("discrete"), dict):
+        emo_discrete = emo.get("discrete") or {}
+        emo_va = emo.get("va") or {}
+    else:
+        emo_discrete = emo if isinstance(emo, dict) else {}
+        emo_va = {}
+
     # --------------------
     # Overall tab
     # --------------------
     with tabs[0]:
-        # Sentiment (overall)
         st.markdown("**Sentiment (overall)**")
         pos = neg = unc = 0
-        for s, conf in (analysis.get("sentiment") or []):
+        for s, _conf in sentiments:
             if s == "Positive":
                 pos += 1
             elif s == "Negative":
@@ -186,15 +378,6 @@ def render_analysis_results(analysis: dict):
         else:
             st.write("Positive: 0 — Negative: 0 — Uncertain: 0")
 
-        # Emotions (overall): supports both legacy and nested format
-        emo = analysis.get("emotion") or {}
-        if isinstance(emo, dict) and isinstance(emo.get("discrete"), dict):
-            emo_discrete = emo.get("discrete") or {}
-            emo_va = emo.get("va") or {}
-        else:
-            emo_discrete = emo if isinstance(emo, dict) else {}
-            emo_va = {}
-
         emo_pct = emo_discrete.get("percentages") or {}
         has_emo_overall = bool(emo_va or emo_pct)
         if has_emo_overall:
@@ -202,23 +385,23 @@ def render_analysis_results(analysis: dict):
 
             if emo_va:
                 st.markdown("VA")
-                mean_val = float(emo_va.get("mean_valence", 0.0))
-                mean_aro = float(emo_va.get("mean_arousal", 0.0))
-                std_val = float(emo_va.get("std_valence", 0.0))
-                std_aro = float(emo_va.get("std_arousal", 0.0))
+                mean_val = _safe_float(emo_va.get("mean_valence", 0.0))
+                mean_aro = _safe_float(emo_va.get("mean_arousal", 0.0))
+                std_val = _safe_float(emo_va.get("std_valence", 0.0))
+                std_aro = _safe_float(emo_va.get("std_arousal", 0.0))
                 mcols = st.columns(4)
                 mcols[0].metric("Mean valence", f"{mean_val:.3f}")
                 mcols[1].metric("Mean arousal", f"{mean_aro:.3f}")
                 mcols[2].metric("Valence std", f"{std_val:.3f}")
                 mcols[3].metric("Arousal std", f"{std_aro:.3f}")
 
-                iqr_val = float(emo_va.get("iqr_valence", 0.0))
-                iqr_aro = float(emo_va.get("iqr_arousal", 0.0))
-                min_val = float(emo_va.get("min_valence", 0.0))
-                max_val = float(emo_va.get("max_valence", 0.0))
-                min_aro = float(emo_va.get("min_arousal", 0.0))
-                max_aro = float(emo_va.get("max_arousal", 0.0))
-                mean_dist = float(emo_va.get("mean_distance", 0.0))
+                iqr_val = _safe_float(emo_va.get("iqr_valence", 0.0))
+                iqr_aro = _safe_float(emo_va.get("iqr_arousal", 0.0))
+                min_val = _safe_float(emo_va.get("min_valence", 0.0))
+                max_val = _safe_float(emo_va.get("max_valence", 0.0))
+                min_aro = _safe_float(emo_va.get("min_arousal", 0.0))
+                max_aro = _safe_float(emo_va.get("max_arousal", 0.0))
+                mean_dist = _safe_float(emo_va.get("mean_distance", 0.0))
                 scols = st.columns(3)
                 scols[0].metric("Valence IQR", f"{iqr_val:.3f}")
                 scols[1].metric("Arousal IQR", f"{iqr_aro:.3f}")
@@ -232,16 +415,16 @@ def render_analysis_results(analysis: dict):
                 activation = emo_va.get("activation_split") or {}
                 p_df = pd.DataFrame(
                     [
-                        {"bucket": "Positive", "percent": float(polarity.get("positive_pct", 0.0))},
-                        {"bucket": "Neutral", "percent": float(polarity.get("neutral_pct", 0.0))},
-                        {"bucket": "Negative", "percent": float(polarity.get("negative_pct", 0.0))},
+                        {"bucket": "Positive", "percent": _safe_float(polarity.get("positive_pct", 0.0))},
+                        {"bucket": "Neutral", "percent": _safe_float(polarity.get("neutral_pct", 0.0))},
+                        {"bucket": "Negative", "percent": _safe_float(polarity.get("negative_pct", 0.0))},
                     ]
                 )
                 a_df = pd.DataFrame(
                     [
-                        {"bucket": "High arousal", "percent": float(activation.get("high_pct", 0.0))},
-                        {"bucket": "Mid arousal", "percent": float(activation.get("mid_pct", 0.0))},
-                        {"bucket": "Calm", "percent": float(activation.get("calm_pct", 0.0))},
+                        {"bucket": "High arousal", "percent": _safe_float(activation.get("high_pct", 0.0))},
+                        {"bucket": "Mid arousal", "percent": _safe_float(activation.get("mid_pct", 0.0))},
+                        {"bucket": "Calm", "percent": _safe_float(activation.get("calm_pct", 0.0))},
                     ]
                 )
                 split_cols = st.columns(2)
@@ -293,6 +476,136 @@ def render_analysis_results(analysis: dict):
                     else:
                         st.bar_chart(q_df, x="quadrant", y="percent", use_container_width=True)
 
+                # Overall VA scatter with click-to-review.
+                if has_va:
+                    st.markdown("VA space (reviews)")
+                    va_rows = []
+                    for i, review in enumerate(reviews):
+                        point = per_review_va[i] or {}
+                        q = str(point.get("quadrant") or "").strip().upper()
+                        if q not in {"HVHA", "HVLA", "LVHA", "LVLA"}:
+                            q = "REVIEW"
+                        va_rows.append(
+                            {
+                                "review_idx": i,
+                                "review_label": f"Review {i + 1}",
+                                "title": str(review.get("title") or "(no title)"),
+                                "review": _short_text(review.get("content") or ""),
+                                "valence": _safe_float(point.get("valence", 0.0)),
+                                "arousal": _safe_float(point.get("arousal", 0.0)),
+                                "quadrant": str(point.get("quadrant") or ""),
+                                "kind": "review",
+                                "color_key": q,
+                            }
+                        )
+                    guide_rows = []
+                    for step in range(-100, 101):
+                        t = step / 100.0
+                        guide_rows.append(
+                            {
+                                "review_idx": -1,
+                                "review_label": "",
+                                "title": "",
+                                "review": "",
+                                "valence": t,
+                                "arousal": 0.0,
+                                "quadrant": "",
+                                "kind": "guide",
+                                "color_key": "GUIDE",
+                            }
+                        )
+                        guide_rows.append(
+                            {
+                                "review_idx": -1,
+                                "review_label": "",
+                                "title": "",
+                                "review": "",
+                                "valence": 0.0,
+                                "arousal": t,
+                                "quadrant": "",
+                                "kind": "guide",
+                                "color_key": "GUIDE",
+                            }
+                        )
+                    # Draw guides first, reviews on top.
+                    df_va = pd.DataFrame(guide_rows + va_rows)
+                    st.caption("Hover for review text. Click a point, then open 'Insights per Review' to inspect it.")
+                    if alt is not None:
+                        pick = alt.selection_point(
+                            name="review_pick",
+                            fields=["review_idx"],
+                            on="click",
+                            nearest=True,
+                            empty=False,
+                        )
+                        points_chart = (
+                            alt.Chart(df_va)
+                            .mark_circle()
+                            .encode(
+                                x=alt.X("valence:Q", scale=alt.Scale(domain=[-1, 1]), title="Valence"),
+                                y=alt.Y("arousal:Q", scale=alt.Scale(domain=[-1, 1]), title="Arousal"),
+                                color=alt.Color(
+                                    "color_key:N",
+                                    title="Quadrant",
+                                    scale=alt.Scale(
+                                        domain=["GUIDE", "HVHA", "HVLA", "LVHA", "LVLA", "REVIEW"],
+                                        range=[
+                                            "#c8c8c8",
+                                            "#1f77b4",
+                                            "#2ca02c",
+                                            "#d62728",
+                                            "#9467bd",
+                                            "#111111",
+                                        ],
+                                    ),
+                                    legend=alt.Legend(values=["HVHA", "HVLA", "LVHA", "LVLA", "REVIEW"]),
+                                ),
+                                size=alt.condition(
+                                    "datum.kind == 'review'",
+                                    alt.value(170),
+                                    alt.value(12),
+                                ),
+                                opacity=alt.condition(
+                                    "datum.kind == 'review'",
+                                    alt.value(0.95),
+                                    alt.value(0.55),
+                                ),
+                                stroke=alt.condition(
+                                    "datum.kind == 'review'",
+                                    alt.value("#111111"),
+                                    alt.value("#c8c8c8"),
+                                ),
+                                strokeWidth=alt.condition(
+                                    "datum.kind == 'review'",
+                                    alt.value(0.6),
+                                    alt.value(0.0),
+                                ),
+                                tooltip=[
+                                    "review_label:N",
+                                    "title:N",
+                                    "review:N",
+                                    alt.Tooltip("valence:Q", format=".3f"),
+                                    alt.Tooltip("arousal:Q", format=".3f"),
+                                ],
+                            )
+                            .add_params(pick)
+                            .properties(height=360)
+                        )
+                        event = st.altair_chart(
+                            points_chart,
+                            use_container_width=True,
+                            on_select="rerun",
+                            selection_mode=["review_pick"],
+                            key="search3_va_overall_scatter",
+                        )
+                        picked_idx = _extract_selected_review_idx(event)
+                        if picked_idx is not None and 0 <= int(picked_idx) < len(reviews):
+                            if picked_idx != st.session_state.get("search3_review_idx"):
+                                st.session_state.search3_review_idx = picked_idx
+                                st.success(f"Selected Review {picked_idx + 1}. Open 'Insights per Review' tab to view details.")
+                    else:
+                        st.scatter_chart(df_va, x="valence", y="arousal", color="quadrant")
+
                 # Short interpretation to prevent "mean near 0 = neutral" misread.
                 interp = []
                 if abs(mean_val) <= 0.10 and std_val >= 0.30:
@@ -311,7 +624,7 @@ def render_analysis_results(analysis: dict):
                 else:
                     interp.append("Emotional intensity is generally low.")
 
-                high_pct = float(activation.get("high_pct", 0.0))
+                high_pct = _safe_float(activation.get("high_pct", 0.0))
                 if high_pct >= 40.0:
                     interp.append("A large share of reviews are high-arousal.")
                 st.info(" ".join(interp))
@@ -353,19 +666,6 @@ def render_analysis_results(analysis: dict):
     # Per-review tab
     # --------------------
     with tabs[1]:
-        reviews = analysis.get("reviews") or []
-        per_review = analysis.get("emotion_by_review") or []
-        sentiments = analysis.get("sentiment") or []
-
-        if isinstance(per_review, dict):
-            per_review_discrete = per_review.get("discrete") or []
-            per_review_va = per_review.get("va") or []
-        else:
-            per_review_discrete = per_review or []
-            per_review_va = []
-
-        has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
-        has_va = bool(reviews and len(per_review_va) == len(reviews))
         if not reviews or (not has_discrete and not has_va):
             st.caption("No per-review emotion details to show yet.")
         else:
@@ -400,36 +700,136 @@ def render_analysis_results(analysis: dict):
             platform = r.get("platform") or ""
 
             st.markdown(f"**{title}**")
-            meta = " · ".join([p for p in [platform, date, (f"{rating} ★" if rating is not None else None)] if p])
+            meta = " · ".join(
+                [p for p in [platform, date, (f"{rating} ★" if rating is not None else None)] if p]
+            )
             if meta:
                 st.caption(meta)
             if content:
                 st.write(content)
 
-            # Per-review sentiment viz
             if idx < len(sentiments):
                 s_label, s_conf = sentiments[idx]
-                s_conf = float(s_conf)
+                s_conf = _safe_float(s_conf)
                 st.markdown("**Sentiment (this review)**")
                 st.write(f"{s_label}: {s_conf:.1%}")
                 st.progress(max(0.0, min(1.0, s_conf)))
 
-            # Per-review emotion viz
             if dist or va_point:
                 st.markdown("**Emotion (this review)**")
 
                 if va_point:
                     st.markdown("VA")
-                    v = float(va_point.get("valence", 0.0))
-                    a = float(va_point.get("arousal", 0.0))
+                    v = _safe_float(va_point.get("valence", 0.0))
+                    a = _safe_float(va_point.get("arousal", 0.0))
                     q = str(va_point.get("quadrant", ""))
                     vcols = st.columns(3)
                     vcols[0].metric("Valence", f"{v:.3f}")
                     vcols[1].metric("Arousal", f"{a:.3f}")
                     vcols[2].metric("Quadrant", q or "N/A")
 
+                    rows, missing = _build_emotion_distance_rows(v, a)
+                    if rows:
+                        st.markdown("VA space vs. emotion anchors")
+                        st.caption("All 28 emotions are shown; top 10 closest are highlighted.")
+                        df_e = pd.DataFrame(rows)
+                        if alt is not None:
+                            axis_df = pd.DataFrame([{"x": 0.0, "y": 0.0}])
+                            hline = alt.Chart(axis_df).mark_rule(color="#d0d0d0").encode(y="y:Q")
+                            vline = alt.Chart(axis_df).mark_rule(color="#d0d0d0").encode(x="x:Q")
+
+                            lines = (
+                                alt.Chart(df_e)
+                                .mark_rule(strokeWidth=1.3)
+                                .encode(
+                                    x=alt.X("review_valence:Q", scale=alt.Scale(domain=[-1, 1]), title="Valence"),
+                                    y=alt.Y("review_arousal:Q", scale=alt.Scale(domain=[-1, 1]), title="Arousal"),
+                                    x2="emotion_valence:Q",
+                                    y2="emotion_arousal:Q",
+                                    color=alt.condition(
+                                        "datum.is_top10",
+                                        alt.value("#cf5c36"),
+                                        alt.value("#c9c9c9"),
+                                    ),
+                                    opacity=alt.condition(
+                                        "datum.is_top10",
+                                        alt.value(0.95),
+                                        alt.value(0.25),
+                                    ),
+                                    tooltip=[
+                                        "emotion:N",
+                                        alt.Tooltip("distance:Q", format=".3f"),
+                                        "rank:Q",
+                                    ],
+                                )
+                            )
+
+                            emotion_points = (
+                                alt.Chart(df_e)
+                                .mark_circle(size=70)
+                                .encode(
+                                    x=alt.X("emotion_valence:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    y=alt.Y("emotion_arousal:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    color=alt.condition(
+                                        "datum.is_top10",
+                                        alt.value("#cf5c36"),
+                                        alt.value("#8c8c8c"),
+                                    ),
+                                    opacity=alt.condition(
+                                        "datum.is_top10",
+                                        alt.value(1.0),
+                                        alt.value(0.55),
+                                    ),
+                                    tooltip=[
+                                        "emotion:N",
+                                        alt.Tooltip("emotion_valence:Q", format=".3f"),
+                                        alt.Tooltip("emotion_arousal:Q", format=".3f"),
+                                        alt.Tooltip("distance:Q", format=".3f"),
+                                        "rank:Q",
+                                    ],
+                                )
+                            )
+
+                            top10_labels = (
+                                alt.Chart(df_e[df_e["is_top10"]])
+                                .mark_text(dx=6, dy=-6, fontSize=10, color="#b23a48")
+                                .encode(
+                                    x=alt.X("emotion_valence:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    y=alt.Y("emotion_arousal:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    text="emotion:N",
+                                )
+                            )
+
+                            review_df = pd.DataFrame([{"label": "Review", "valence": v, "arousal": a}])
+                            review_point = (
+                                alt.Chart(review_df)
+                                .mark_point(shape="diamond", size=180, color="#1f1f1f")
+                                .encode(
+                                    x=alt.X("valence:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    y=alt.Y("arousal:Q", scale=alt.Scale(domain=[-1, 1])),
+                                    tooltip=[
+                                        "label:N",
+                                        alt.Tooltip("valence:Q", format=".3f"),
+                                        alt.Tooltip("arousal:Q", format=".3f"),
+                                    ],
+                                )
+                            )
+
+                            chart = (hline + vline + lines + emotion_points + review_point + top10_labels).properties(
+                                height=420
+                            )
+                            st.altair_chart(chart, use_container_width=True)
+                        else:
+                            scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
+                            st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
+
+                        top10 = df_e[df_e["is_top10"]][["rank", "emotion", "distance"]]
+                        st.dataframe(top10, hide_index=True, use_container_width=True)
+                    if missing:
+                        st.caption(f"Missing lexicon entries: {', '.join(missing)}")
+
                 if dist:
-                    top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
+                    top_items = sorted(((k, _safe_float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
                     st.markdown("Discrete emotion")
                     df = pd.DataFrame(top_items, columns=["emotion", "score"])
                     if alt is not None:
