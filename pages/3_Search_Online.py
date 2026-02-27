@@ -4,10 +4,11 @@ from fetchers.google_play import search_google_play
 from fetchers.ios import search_ios
 from fetchers.g2 import search_g2
 from fetchers.trustpilot import search_trustpilot
-from inference.topic import predict_topic_batch
+from inference.topic import predict_topic_batch_all
 from inference.sentiment import predict_single as predict_sentiment_single
 from inference.emotion import emotion_percentages, predict_proba_single
 from inference.va import predict_va_single, summarize_va
+from inference.llm_topic_summary import llm_topic_summary
 
 # Import refactored helpers
 from helpers.search_ui_helpers import (
@@ -17,6 +18,8 @@ from helpers.search_ui_helpers import (
 from helpers.search_validation import validate_search_inputs, validate_submit_inputs, parse_pasted_link
 
 st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout="wide")
+
+TOPIC_EXAMPLES_PER_THEME = 2
 
 # --- CSS (same vibe as your other pages) ---
 st.markdown(
@@ -125,6 +128,107 @@ defaults = {
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+
+def _collect_topic_examples_for_payload(
+    topic_res: dict,
+    review_texts: list[str],
+    per_topic_limit: int = TOPIC_EXAMPLES_PER_THEME,
+) -> dict:
+    examples_by_topic = {}
+    topics = topic_res.get("topics") or []
+    keywords_by_topic = topic_res.get("keywords_by_topic") or {}
+    if not isinstance(topics, list) or len(topics) != len(review_texts):
+        return examples_by_topic
+
+    per_topic_limit = max(1, min(5, int(per_topic_limit or 2)))
+    scored = {}
+
+    for idx, topic_id in enumerate(topics):
+        try:
+            tid = int(topic_id)
+        except Exception:
+            continue
+        if tid == -1:
+            continue
+
+        text = str(review_texts[idx] or "").strip()
+        if not text:
+            continue
+
+        text_lower = text.lower()
+        topic_keywords = [str(k).strip().lower() for k in keywords_by_topic.get(tid, [])[:10] if str(k).strip()]
+        overlap = sum(1 for kw in topic_keywords if kw and kw in text_lower)
+        if overlap <= 0:
+            continue
+
+        snippet = text[:180] + ("..." if len(text) > 180 else "")
+        scored.setdefault(tid, []).append((overlap, snippet))
+
+    for tid, rows in scored.items():
+        rows.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
+        picked = []
+        seen = set()
+        for _overlap, snippet in rows:
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            picked.append(snippet)
+            if len(picked) >= per_topic_limit:
+                break
+        if picked:
+            examples_by_topic[tid] = picked
+
+    return examples_by_topic
+
+
+def _build_top_topics_payload(
+    topic_res: dict,
+    total_reviews: int,
+    review_texts: list[str] | None = None,
+    examples_per_topic: int = TOPIC_EXAMPLES_PER_THEME,
+) -> list:
+    if not topic_res or total_reviews <= 0:
+        return []
+    counts = topic_res.get("counts") or {}
+    keywords_by_topic = topic_res.get("keywords_by_topic") or {}
+    examples_by_topic = {}
+    if review_texts:
+        examples_by_topic = _collect_topic_examples_for_payload(
+            topic_res=topic_res,
+            review_texts=review_texts,
+            per_topic_limit=examples_per_topic,
+        )
+    items = [(tid, c) for tid, c in counts.items() if tid != -1]
+    items.sort(key=lambda x: x[1], reverse=True)
+    return [
+        {
+            "topic_id": tid,
+            "count": c,
+            "pct": c / total_reviews,
+            "keywords": keywords_by_topic.get(tid, []),
+            "examples": examples_by_topic.get(tid, []),
+        }
+        for tid, c in items[:5]
+    ]
+
+
+def _topic_summary_or_empty(
+    topic_res: dict,
+    total_reviews: int,
+    cluster_label: str,
+    review_texts: list[str] | None = None,
+    examples_per_topic: int = TOPIC_EXAMPLES_PER_THEME,
+) -> str:
+    top_topics_payload = _build_top_topics_payload(
+        topic_res=topic_res,
+        total_reviews=total_reviews,
+        review_texts=review_texts,
+        examples_per_topic=examples_per_topic,
+    )
+    if not top_topics_payload:
+        return ""
+    return llm_topic_summary(cluster_label, top_topics_payload)
 
 
 # -----------------------------------------------------------------
@@ -397,17 +501,30 @@ if st.session_state.search3_submit_clicked:
             with cols[0]:
                 if st.button("Run topic + sentiment + emotion on current set", key="run_preview_analysis"):
                     texts = [(r.get("content") or "").strip() for r in fetched]
-                    cluster_label = st.session_state.get("cluster")
+                    cluster_label = st.session_state.get("cluster") or "All reviews"
+
                     topic_res = None
-                    if not cluster_label:
-                        st.warning("Select a cluster on the left before running the topic model — sentiment will still run on the preview.")
-                    else:
-                        with st.spinner("Running topic model on preview..."):
+                    topic_summary_text = ""
+                    with st.spinner("Running topic model on preview..."):
+                        try:
+                            topic_res = predict_topic_batch_all(texts, top_k_words=10)
+                        except Exception as exc:
+                            st.error(f"Topic model failed: {exc}")
+                            topic_res = None
+
+                    if topic_res:
+                        with st.spinner("Generating LLM topic summary..."):
                             try:
-                                topic_res = predict_topic_batch(texts, cluster_label=cluster_label)
+                                topic_summary_text = _topic_summary_or_empty(
+                                    topic_res=topic_res,
+                                    total_reviews=len(texts),
+                                    cluster_label=cluster_label,
+                                    review_texts=texts,
+                                    examples_per_topic=TOPIC_EXAMPLES_PER_THEME,
+                                )
                             except Exception as exc:
-                                st.error(f"Topic model failed: {exc}")
-                                topic_res = None
+                                st.warning(f"LLM summary failed: {exc}")
+                                topic_summary_text = ""
 
                     with st.spinner("Running sentiment on preview..."):
                         sentiments = [predict_sentiment_single(t or "") for t in texts]
@@ -423,6 +540,7 @@ if st.session_state.search3_submit_clicked:
 
                     st.session_state.search3_preview_analysis = {
                         "topic": topic_res,
+                        "topic_summary": topic_summary_text,
                         "sentiment": sentiments,
                         "emotion": {
                             "va": va_overall,

@@ -11,6 +11,9 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     alt = None
 
+TOPIC_DEBUG_MESSAGES_ENABLED = False
+TOPIC_DEBUG_EXAMPLES_PER_THEME = 2
+
 EMOTWEET_28 = [
     "admiration",
     "amusement",
@@ -653,14 +656,74 @@ def render_analysis_results(analysis: dict):
         t = analysis.get("topic") or {}
         counts = t.get("counts") or {}
         keywords = t.get("keywords_by_topic") or {}
-        if counts:
+        topics_per_review = t.get("topics") or []
+        topic_summary = (analysis.get("topic_summary") or "").strip()
+        if counts or topic_summary:
             st.markdown("**Topic (overall)**")
-            for topic_id, cnt in sorted(counts.items(), key=lambda kv: -kv[1]):
-                if topic_id == -1:
-                    lbl = "(outliers)"
-                else:
-                    lbl = f"Topic {topic_id} — {', '.join(keywords.get(topic_id, [])[:5])}"
-                st.write(f"- {lbl}: {cnt}")
+            if topic_summary:
+                st.markdown("**LLM Summary**")
+                st.write(topic_summary)
+
+            if TOPIC_DEBUG_MESSAGES_ENABLED:
+                topic_examples = {}
+                if isinstance(topics_per_review, list) and len(topics_per_review) == len(reviews):
+                    scored_examples = {}
+                    for idx, topic_id in enumerate(topics_per_review):
+                        try:
+                            tid = int(topic_id)
+                        except Exception:
+                            continue
+                        review_obj = reviews[idx] or {}
+                        review_text = str((review_obj.get("content") or review_obj.get("title") or "")).strip()
+                        if not review_text:
+                            continue
+                        if tid == -1:
+                            continue
+                        topic_keywords = [str(k).strip().lower() for k in keywords.get(tid, [])[:10] if str(k).strip()]
+                        overlap = sum(1 for kw in topic_keywords if kw and kw in review_text.lower())
+                        snippet = _short_text(review_text, limit=180)
+                        scored_examples.setdefault(tid, []).append((overlap, snippet))
+
+                    for tid, rows in scored_examples.items():
+                        rows.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
+                        picked = []
+                        seen = set()
+                        for overlap, snippet in rows:
+                            if overlap <= 0:
+                                continue
+                            if snippet in seen:
+                                continue
+                            seen.add(snippet)
+                            picked.append(snippet)
+                            if len(picked) >= TOPIC_DEBUG_EXAMPLES_PER_THEME:
+                                break
+                        if picked:
+                            topic_examples[tid] = picked
+
+                theme_rank = 1
+                for topic_id, cnt in sorted(counts.items(), key=lambda kv: -kv[1]):
+                    if topic_id == -1:
+                        lbl = "Outliers"
+                    else:
+                        top_words = ", ".join(keywords.get(topic_id, [])[:5])
+                        if top_words:
+                            lbl = f"Theme {theme_rank} ({cnt} reviews): {top_words}"
+                        else:
+                            lbl = f"Theme {theme_rank} ({cnt} reviews)"
+                        theme_rank += 1
+
+                    if topic_id == -1:
+                        st.write(f"- {lbl}: {cnt}")
+                    else:
+                        st.write(f"- {lbl}")
+
+                    examples = topic_examples.get(topic_id, [])
+                    if topic_id != -1:
+                        if examples:
+                            for i, ex in enumerate(examples, start=1):
+                                st.caption(f"Example {i}: {ex}")
+                        else:
+                            st.caption("No strong keyword-matching examples in this sample.")
 
     # --------------------
     # Per-review tab
@@ -844,9 +907,6 @@ def render_analysis_results(analysis: dict):
                         st.altair_chart(chart, use_container_width=True)
                     else:
                         st.bar_chart(df, x="emotion", y="score", use_container_width=True)
-
-    st.markdown("\nYou can fetch the full review set and re-run analysis, or proceed to the next step in the pipeline.")
-
 
 # ===== Confirmation & identifier extraction =====
 

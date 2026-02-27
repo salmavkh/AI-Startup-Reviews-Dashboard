@@ -12,6 +12,7 @@ from sentence_transformers import SentenceTransformer
 # Paths
 # =========================================================
 TOPIC_MODELS_DIR = "artifacts/bertopic_by_cluster"
+ALL_TOPIC_MODEL_PATH = "artifacts/bertopic_all_n30.model"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 _CLUSTER_TO_MODEL = {
@@ -50,6 +51,12 @@ def load_topic_model(cluster_label: str) -> BERTopic:
     embedder = _load_embedder()
     model = BERTopic.load(model_path, embedding_model=embedder)
     return model
+
+
+@st.cache_resource
+def load_topic_model_all() -> BERTopic:
+    embedder = _load_embedder()
+    return BERTopic.load(ALL_TOPIC_MODEL_PATH, embedding_model=embedder)
 
 
 # =========================================================
@@ -111,6 +118,23 @@ def predict_topic_batch(
       }
     """
     model = load_topic_model(cluster_label)
+    return _predict_topic_batch_with_model(model=model, texts=texts, top_k_words=top_k_words)
+
+
+def predict_topic_batch_all(
+    texts: List[str],
+    top_k_words: int = 10,
+) -> Dict[str, Any]:
+    model = load_topic_model_all()
+    return _predict_topic_batch_with_model(model=model, texts=texts, top_k_words=top_k_words)
+
+
+def _predict_topic_batch_with_model(
+    model: BERTopic,
+    texts: List[str],
+    top_k_words: int = 10,
+) -> Dict[str, Any]:
+    """Shared batch prediction logic for any loaded BERTopic model."""
 
     topics, probs = model.transform(texts)  # topics: list[int]
     topics = [int(t) for t in topics]
