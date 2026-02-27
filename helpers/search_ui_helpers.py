@@ -48,6 +48,7 @@ EMOTWEET_28 = [
 NRC_VAD_LEXICON_PATH = os.path.join(
     "lexicon", "NRC-VAD-Lexicon-v2.1", "NRC-VAD-Lexicon-v2.1.txt"
 )
+EMOTION_ANCHOR_RBF_SIGMA = 0.40
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -160,10 +161,14 @@ def _load_emotweet28_va_points():
 def _build_emotion_distance_rows(valence: float, arousal: float):
     points, missing = _load_emotweet28_va_points()
     rows = []
+    sigma2 = max(1e-12, float(EMOTION_ANCHOR_RBF_SIGMA) ** 2)
+    denom = 2.0 * sigma2
     for p in points:
         ev = _safe_float(p.get("valence"))
         ea = _safe_float(p.get("arousal"))
-        d = math.sqrt((valence - ev) ** 2 + (arousal - ea) ** 2)
+        d2 = (valence - ev) ** 2 + (arousal - ea) ** 2
+        d = math.sqrt(d2)
+        similarity = math.exp(-d2 / denom)
         rows.append(
             {
                 "emotion": p.get("emotion"),
@@ -172,6 +177,7 @@ def _build_emotion_distance_rows(valence: float, arousal: float):
                 "review_valence": valence,
                 "review_arousal": arousal,
                 "distance": d,
+                "similarity": similarity,
             }
         )
 
@@ -822,6 +828,7 @@ def render_analysis_results(analysis: dict):
                                     tooltip=[
                                         "emotion:N",
                                         alt.Tooltip("distance:Q", format=".3f"),
+                                        alt.Tooltip("similarity:Q", format=".3f"),
                                         "rank:Q",
                                     ],
                                 )
@@ -848,6 +855,7 @@ def render_analysis_results(analysis: dict):
                                         alt.Tooltip("emotion_valence:Q", format=".3f"),
                                         alt.Tooltip("emotion_arousal:Q", format=".3f"),
                                         alt.Tooltip("distance:Q", format=".3f"),
+                                        alt.Tooltip("similarity:Q", format=".3f"),
                                         "rank:Q",
                                     ],
                                 )
@@ -886,7 +894,7 @@ def render_analysis_results(analysis: dict):
                             scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
                             st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
 
-                        top10 = df_e[df_e["is_top10"]][["rank", "emotion", "distance"]]
+                        top10 = df_e[df_e["is_top10"]][["rank", "emotion", "distance", "similarity"]]
                         st.dataframe(top10, hide_index=True, use_container_width=True)
                     if missing:
                         st.caption(f"Missing lexicon entries: {', '.join(missing)}")
