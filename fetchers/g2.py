@@ -15,6 +15,7 @@ import json
 import requests
 from bs4 import BeautifulSoup
 
+from fetchers.language_filter import is_english_review
 try:
     from apify_client import ApifyClient
 except Exception:  # pragma: no cover - library may be missing in CI/dev
@@ -102,6 +103,14 @@ def _normalize_item(it: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _extract_language_hint(item: Dict[str, Any]) -> Optional[str]:
+    for key in ("language", "lang", "locale", "review_language"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _safe_get(url: str, **kwargs):
     try:
         return requests.get(url, timeout=10, **kwargs)
@@ -133,7 +142,9 @@ def _try_g2_html_fallback(slug: str, limit: int = 5) -> List[Dict[str, Any]]:
                     items = jd.get("review")
                 else:
                     items = [jd]
-                for it in items[:limit]:
+                for it in items:
+                    if len(out) >= limit:
+                        break
                     rid = str((it.get("@id") or it.get("identifier") or it.get("reviewId") or ""))
                     content = it.get("reviewBody") or it.get("description") or it.get("body") or None
                     rating = None
@@ -153,7 +164,7 @@ def _try_g2_html_fallback(slug: str, limit: int = 5) -> List[Dict[str, Any]]:
                         "raw": json.dumps(it, ensure_ascii=False),
                     })
                 if out:
-                    return out
+                    return [r for r in out if is_english_review(r.get("title"), r.get("content"))]
     except Exception:
         pass
 
@@ -161,7 +172,9 @@ def _try_g2_html_fallback(slug: str, limit: int = 5) -> List[Dict[str, Any]]:
     try:
         soup = BeautifulSoup(resp.text, "html.parser")
         blocks = soup.select("div[data-review-id], div.g2-review")
-        for b in blocks[:limit]:
+        for b in blocks:
+            if len(out) >= limit:
+                break
             content = (b.get_text(separator="\n", strip=True) or None)
             rid = b.get("data-review-id") or None
             out.append({
@@ -177,7 +190,7 @@ def _try_g2_html_fallback(slug: str, limit: int = 5) -> List[Dict[str, Any]]:
     except Exception:
         return out
 
-    return out
+    return [r for r in out if is_english_review(r.get("title"), r.get("content"))]
 
 
 def fetch_g2_reviews(slug: str, limit: int = 20, actor_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -206,9 +219,18 @@ def fetch_g2_reviews(slug: str, limit: int = 20, actor_id: Optional[str] = None)
 
     items = list(client.dataset(dsid).iterate_items())
     out = []
-    for it in items[:int(limit)]:
+    for it in items:
+        if len(out) >= int(limit):
+            break
         try:
-            out.append(_normalize_item(it))
+            normalized = _normalize_item(it)
+            if not is_english_review(
+                normalized.get("title"),
+                normalized.get("content"),
+                language_hint=_extract_language_hint(it),
+            ):
+                continue
+            out.append(normalized)
         except Exception:
             # skip malformed item
             continue

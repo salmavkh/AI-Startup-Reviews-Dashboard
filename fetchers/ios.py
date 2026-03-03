@@ -6,6 +6,7 @@ import urllib.parse
 
 import requests
 
+from fetchers.language_filter import is_english_review
 
 def _safe_get(url: str, **kwargs) -> Optional[requests.Response]:
     """Small wrapper that never throws."""
@@ -93,7 +94,9 @@ def fetch_ios_reviews(app_id: str, limit: int = 20, country: str = "us") -> List
             return out
         jd = resp.json()
         entries = jd.get("feed", {}).get("entry") or []
-        for e in (entries or [])[1:limit + 1]:
+        for e in (entries or [])[1:]:
+            if len(out) >= limit:
+                break
             title = (e.get("title") or {}).get("label") if isinstance(e.get("title"), dict) else e.get("title")
             content = (e.get("content") or {}).get("label") if isinstance(e.get("content"), dict) else e.get("content")
             rating = None
@@ -103,6 +106,8 @@ def fetch_ios_reviews(app_id: str, limit: int = 20, country: str = "us") -> List
                 rating = None
             author = (e.get("author") or {}).get("name", {}).get("label") if isinstance((e.get("author") or {}).get("name"), dict) else None
             date = (e.get("updated") or {}).get("label") if isinstance(e.get("updated"), dict) else None
+            if not is_english_review(title=title, content=content):
+                continue
             out.append(_normalize_review(
                 platform="iOS App Store",
                 platform_id=app_id,

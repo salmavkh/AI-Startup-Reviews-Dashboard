@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from fetchers.language_filter import is_english_review
 
 def _safe_get(url: str, **kwargs) -> Optional[requests.Response]:
     """Small wrapper that never throws."""
@@ -157,6 +158,9 @@ def _flatten_trustpilot_next_data(jd: dict, slug: str) -> List[Dict[str, Any]]:
         rating = r.get("rating") or r.get("stars") or None
         published = (r.get("dates") or {}).get("publishedDate") or r.get("createdAt") or r.get("date")
         author = (r.get("consumer") or {}).get("displayName") or r.get("author") or r.get("userName") or None
+        language_hint = r.get("language") or r.get("locale") or (r.get("consumer") or {}).get("locale")
+        if not is_english_review(title=title, content=text, language_hint=language_hint):
+            continue
 
         out.append(_normalize_review(
             platform="Trustpilot",
@@ -256,6 +260,8 @@ def fetch_trustpilot_reviews(slug: str, limit: int = 20) -> List[Dict[str, Any]]
                     reviewer=author,
                     url=None,
                 )
+                if not is_english_review(title=review.get("title"), content=review.get("content")):
+                    continue
                 if rid:
                     seen_ids.add(rid)
                 out.append(review)

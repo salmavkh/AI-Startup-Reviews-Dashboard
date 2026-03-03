@@ -12,6 +12,7 @@ except Exception:
 import requests
 from bs4 import BeautifulSoup
 
+from fetchers.language_filter import is_english_review
 
 ENGLISH_STOREFRONTS = ["us", "gb", "au", "ie", "nz", "sg"]
 
@@ -138,14 +139,18 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
                         rid = r.get("reviewId") or r.get("userName") or None
                         if rid and rid in seen_ids:
                             continue
+                        title = r.get("title") or None
+                        content = r.get("content") or None
+                        if not is_english_review(title=title, content=content):
+                            continue
                         seen_ids.add(rid)
                         out.append(
                             _normalize_review(
                                 platform="Google Play Store",
                                 platform_id=package,
                                 review_id=rid,
-                                title=(r.get("title") or None),
-                                content=(r.get("content") or None),
+                                title=title,
+                                content=content,
                                 rating=r.get("score"),
                                 date=(r.get("at") or r.get("updated")) and str(r.get("at") or r.get("updated")),
                                 reviewer=r.get("userName") or None,
@@ -172,6 +177,8 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
         blocks = soup.select("div[jscontroller] div[data-review-id], div[class*='single-review']")
         for b in blocks[:limit]:
             text = b.get_text(separator="\n", strip=True)
+            if not is_english_review(title=None, content=text):
+                continue
             out.append(_normalize_review(
                 platform="Google Play Store",
                 platform_id=package,
