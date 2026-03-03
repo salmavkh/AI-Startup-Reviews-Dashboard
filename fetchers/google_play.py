@@ -141,7 +141,8 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
                             continue
                         title = r.get("title") or None
                         content = r.get("content") or None
-                        if not is_english_review(title=title, content=content):
+                        language_hint = r.get("reviewLanguage") or r.get("language") or r.get("lang")
+                        if not is_english_review(title=title, content=content, language_hint=language_hint):
                             continue
                         seen_ids.add(rid)
                         out.append(

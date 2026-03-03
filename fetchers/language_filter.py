@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any, Dict, List
 
 try:
-    from langdetect import LangDetectException, detect as _detect_lang
+    from langdetect import LangDetectException, detect as _detect_lang, detect_langs as _detect_langs
 except Exception:  # pragma: no cover - optional dependency
     LangDetectException = Exception
     _detect_lang = None
+    _detect_langs = None
 
 
 _EN_STOPWORDS = {
@@ -23,6 +25,19 @@ _EN_STOPWORDS = {
 _EN_HINT_WORDS = {
     "app", "great", "good", "bad", "slow", "fast", "support", "review", "service", "product",
     "easy", "hard", "issue", "problem", "works", "working", "update", "price", "value",
+}
+
+_NON_EN_STOPWORDS = {
+    # Spanish
+    "de", "la", "que", "el", "en", "los", "las", "por", "para", "una", "un", "muy", "pero", "con",
+    # French
+    "le", "les", "des", "pas", "est", "sur", "dans", "pour", "avec", "une", "tres", "tout",
+    # German
+    "und", "der", "die", "das", "nicht", "ist", "mit", "ein", "eine", "sehr", "aber",
+    # Portuguese
+    "não", "nao", "uma", "bom", "boa", "muito", "mais", "como", "com", "sem",
+    # Indonesian/Malay
+    "dan", "yang", "ini", "itu", "saya", "tidak", "ada", "untuk", "dengan",
 }
 
 
@@ -56,21 +71,26 @@ def _english_heuristic(text: str) -> bool:
 
     tokens = re.findall(r"[a-z']+", s.lower())
     if not tokens:
-        return all(ord(ch) < 128 for ch in s)
+        return False
 
     if len(tokens) <= 2:
-        if any(tok in _EN_HINT_WORDS for tok in tokens):
+        # Short reviews are ambiguous; be strict.
+        if any(tok in _EN_HINT_WORDS for tok in tokens) or all(tok in _EN_STOPWORDS for tok in tokens):
             return True
-        return all(ord(ch) < 128 for ch in s)
+        return False
 
     stop_hits = sum(1 for tok in tokens if tok in _EN_STOPWORDS)
     hint_hits = sum(1 for tok in tokens if tok in _EN_HINT_WORDS)
+    non_en_hits = sum(1 for tok in tokens if tok in _NON_EN_STOPWORDS)
+
+    if non_en_hits >= 2 and non_en_hits >= stop_hits:
+        return False
 
     if stop_hits >= 2:
         return True
-    if stop_hits >= 1 and (stop_hits / len(tokens)) >= 0.10:
+    if stop_hits >= 1 and (stop_hits / len(tokens)) >= 0.10 and non_en_hits == 0:
         return True
-    if hint_hits >= 2:
+    if hint_hits >= 2 and non_en_hits == 0:
         return True
     return False
 
@@ -90,10 +110,28 @@ def is_english_review(title: str | None, content: str | None, language_hint: str
     if not text:
         return False
 
+    cleaned = _clean_text(text)
+    if len(cleaned) < 6:
+        return False
+
     # Prefer explicit language detector when available for longer content.
-    if _detect_lang is not None and len(text) >= 25:
+    if _detect_langs is not None and len(cleaned) >= 20:
         try:
-            detected = _detect_lang(text)
+            langs = _detect_langs(cleaned)
+            if langs:
+                top = langs[0]
+                if str(top.lang).lower() == "en" and float(top.prob) >= 0.65:
+                    return True
+                if str(top.lang).lower() != "en" and float(top.prob) >= 0.65:
+                    return False
+        except LangDetectException:
+            pass
+        except Exception:
+            pass
+
+    if _detect_lang is not None and len(cleaned) >= 25:
+        try:
+            detected = _detect_lang(cleaned)
             if str(detected).lower() == "en":
                 return True
             return False
@@ -102,4 +140,22 @@ def is_english_review(title: str | None, content: str | None, language_hint: str
         except Exception:
             pass
 
-    return _english_heuristic(text)
+    return _english_heuristic(cleaned)
+
+
+def filter_english_reviews(reviews: List[Dict[str, Any]], limit: int | None = None) -> List[Dict[str, Any]]:
+    """Filter a review list to English-only entries."""
+    out: List[Dict[str, Any]] = []
+    target = None if limit is None else max(0, int(limit))
+    for review in reviews or []:
+        if not isinstance(review, dict):
+            continue
+        title = review.get("title")
+        content = review.get("content")
+        language_hint = review.get("language") or review.get("lang") or review.get("locale")
+        if not is_english_review(title=title, content=content, language_hint=language_hint):
+            continue
+        out.append(review)
+        if target is not None and len(out) >= target:
+            break
+    return out
