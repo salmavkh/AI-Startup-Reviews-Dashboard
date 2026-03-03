@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import random
 import streamlit as st
+from fetchers.language_filter import filter_english_reviews
 
 try:
     import altair as alt
@@ -232,9 +233,13 @@ def fetch_reviews_uncached_tp(identifier: dict, limit: int = 5):
 
 def fetch_reviews_for_ui(platform: str, identifier: dict, limit: int = 5):
     """Unified fetch used by preview + full fetch."""
+    rows = []
     if platform == "Trustpilot":
-        return fetch_reviews_uncached_tp(identifier, limit=limit)
-    return fetch_reviews_cached_non_tp(platform, identifier, limit=limit)
+        rows = fetch_reviews_uncached_tp(identifier, limit=limit)
+    else:
+        rows = fetch_reviews_cached_non_tp(platform, identifier, limit=limit)
+    # Final hard gate: never return non-English reviews to page UI.
+    return filter_english_reviews(rows or [], limit=limit)
 
 
 # ===== Search result processing =====
@@ -333,6 +338,24 @@ def render_analysis_results(analysis: dict):
 
     has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
     has_va = bool(reviews and len(per_review_va) == len(reviews))
+
+    keyword_payload = analysis.get("keywords") or {}
+    if isinstance(keyword_payload, dict):
+        overall_keywords = keyword_payload.get("overall") or []
+        per_review_keywords = keyword_payload.get("per_review") or []
+    else:
+        overall_keywords = []
+        per_review_keywords = []
+
+    topic_payload = analysis.get("topic") or {}
+    if isinstance(topic_payload, dict):
+        topics_per_review = topic_payload.get("topics") or []
+        topic_keywords_by_topic = topic_payload.get("keywords_by_topic") or {}
+        topic_probs = topic_payload.get("probs")
+    else:
+        topics_per_review = []
+        topic_keywords_by_topic = {}
+        topic_probs = None
 
     # Emotions: supports both legacy and nested format
     emo = analysis.get("emotion") or {}
@@ -659,10 +682,8 @@ def render_analysis_results(analysis: dict):
             st.caption("No overall emotion analysis to show yet.")
 
         # Topic (overall)
-        t = analysis.get("topic") or {}
-        counts = t.get("counts") or {}
-        keywords = t.get("keywords_by_topic") or {}
-        topics_per_review = t.get("topics") or []
+        counts = topic_payload.get("counts") or {}
+        keywords = topic_keywords_by_topic or {}
         topic_summary = (analysis.get("topic_summary") or "").strip()
         if counts or topic_summary:
             st.markdown("**Topic (overall)**")
@@ -731,12 +752,42 @@ def render_analysis_results(analysis: dict):
                         else:
                             st.caption("No strong keyword-matching examples in this sample.")
 
+        if overall_keywords:
+            st.markdown("**Keywords (overall)**")
+            keyword_rows = []
+            for item in overall_keywords:
+                if isinstance(item, dict):
+                    term = str(item.get("keyword") or "").strip()
+                    review_count = int(item.get("review_count") or 0)
+                    mentions = int(item.get("mentions") or 0)
+                    avg_score = float(item.get("avg_score") or 0.0)
+                else:
+                    term = str(item).strip()
+                    review_count = 0
+                    mentions = 0
+                    avg_score = 0.0
+
+                if not term:
+                    continue
+                keyword_rows.append(
+                    {
+                        "keyword": term,
+                        "reviews": review_count,
+                        "mentions": mentions,
+                        "avg_score": avg_score,
+                    }
+                )
+
+            if keyword_rows:
+                st.write("Top terms:", ", ".join(r["keyword"] for r in keyword_rows[:10]))
+                st.dataframe(pd.DataFrame(keyword_rows), hide_index=True, use_container_width=True)
+
     # --------------------
     # Per-review tab
     # --------------------
     with tabs[1]:
-        if not reviews or (not has_discrete and not has_va):
-            st.caption("No per-review emotion details to show yet.")
+        if not reviews:
+            st.caption("No per-review details to show yet.")
         else:
             if "search3_review_idx" not in st.session_state:
                 st.session_state.search3_review_idx = 0
@@ -915,6 +966,100 @@ def render_analysis_results(analysis: dict):
                         st.altair_chart(chart, use_container_width=True)
                     else:
                         st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+
+            # Topic details (after emotion, before keywords)
+            topic_id = None
+            try:
+                if isinstance(topics_per_review, list) and idx < len(topics_per_review):
+                    topic_id = int(topics_per_review[idx])
+            except Exception:
+                topic_id = None
+
+            if topic_id is not None:
+                st.markdown("**Topic (this review)**")
+                if topic_id == -1:
+                    st.write("Topic: Unassigned / Misc (outlier)")
+                    topic_words = []
+                else:
+                    st.write(f"Topic ID: {topic_id}")
+                    topic_words = topic_keywords_by_topic.get(topic_id, []) if isinstance(topic_keywords_by_topic, dict) else []
+                    if topic_words:
+                        st.write("Topic words: " + ", ".join(topic_words[:10]))
+
+                topic_confidence = None
+                try:
+                    if topic_probs is not None and idx < len(topic_probs):
+                        row = topic_probs[idx]
+                        if hasattr(row, "__len__") and not isinstance(row, (str, bytes)):
+                            vals = []
+                            for x in row:
+                                try:
+                                    vals.append(float(x))
+                                except Exception:
+                                    continue
+                            if vals:
+                                topic_confidence = max(vals)
+                        else:
+                            topic_confidence = float(row)
+                except Exception:
+                    topic_confidence = None
+
+                if topic_confidence is not None:
+                    st.write(f"Topic confidence: {max(0.0, min(1.0, float(topic_confidence))):.3f}")
+
+                # LLM rationale (best-effort; cached by review index)
+                cluster_label = str(analysis.get("cluster_label") or "").strip()
+                llm_cache = analysis.get("topic_llm_by_review")
+                if not isinstance(llm_cache, dict):
+                    llm_cache = {}
+                    analysis["topic_llm_by_review"] = llm_cache
+
+                if idx not in llm_cache and cluster_label:
+                    with st.spinner("Generating topic rationale..."):
+                        try:
+                            from inference.llm_topic_label import llm_label_topic
+
+                            llm_cache[idx] = llm_label_topic(
+                                cluster_label=cluster_label,
+                                topic_id=int(topic_id),
+                                keywords=topic_words[:10],
+                                review_text=(content or title or "")[:600],
+                            )
+                        except Exception as exc:
+                            llm_cache[idx] = {
+                                "label": "Topic rationale unavailable",
+                                "explanation": f"LLM error: {exc}",
+                            }
+
+                llm_item = llm_cache.get(idx) if isinstance(llm_cache, dict) else None
+                if isinstance(llm_item, dict):
+                    label = str(llm_item.get("label") or "").strip()
+                    explanation = str(llm_item.get("explanation") or "").strip()
+                    if label:
+                        st.write(f"LLM topic label: {label}")
+                    if explanation:
+                        st.write(f"Why: {explanation}")
+
+            # Keywords below topic details
+            review_keyword_rows = []
+            if isinstance(per_review_keywords, list) and idx < len(per_review_keywords):
+                raw_items = per_review_keywords[idx] or []
+                if isinstance(raw_items, list):
+                    for item in raw_items:
+                        if isinstance(item, dict):
+                            term = str(item.get("keyword") or "").strip()
+                            score = float(item.get("score") or 0.0)
+                        else:
+                            term = str(item).strip()
+                            score = 0.0
+                        if not term:
+                            continue
+                        review_keyword_rows.append({"keyword": term, "score": score})
+
+            if review_keyword_rows:
+                st.markdown("**Keywords (this review)**")
+                st.write(", ".join(row["keyword"] for row in review_keyword_rows[:8]))
+                st.dataframe(pd.DataFrame(review_keyword_rows), hide_index=True, use_container_width=True)
 
 # ===== Confirmation & identifier extraction =====
 

@@ -9,6 +9,8 @@ from inference.sentiment import predict_single as predict_sentiment_single
 from inference.emotion import emotion_percentages, predict_proba_single
 from inference.va import predict_va_single, summarize_va
 from inference.llm_topic_summary import llm_topic_summary
+from inference.keywords import extract_keywords_batch
+from fetchers.language_filter import filter_english_reviews
 
 # Import refactored helpers
 from helpers.search_ui_helpers import (
@@ -20,6 +22,8 @@ from helpers.search_validation import validate_search_inputs, validate_submit_in
 st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout="wide")
 
 TOPIC_EXAMPLES_PER_THEME = 2
+KEYWORDS_PER_REVIEW = 5
+KEYWORDS_OVERALL = 20
 
 # --- CSS (same vibe as your other pages) ---
 st.markdown(
@@ -446,6 +450,9 @@ if st.session_state.search3_submit_clicked:
         st.info("A short preview of reviews is shown below. You can run analysis on the preview, or fetch the full set of reviews you requested.")
 
         fetched = st.session_state.get("search3_fetched_reviews") or []
+        # Defensive cleanup for previously cached/session results.
+        fetched = filter_english_reviews(fetched, limit=preview_limit)
+        st.session_state.search3_fetched_reviews = fetched
         platform = confirmed.get("platform")
         
         if not fetched:
@@ -529,6 +536,20 @@ if st.session_state.search3_submit_clicked:
                     with st.spinner("Running sentiment on preview..."):
                         sentiments = [predict_sentiment_single(t or "") for t in texts]
 
+                    with st.spinner("Extracting keywords on current set..."):
+                        if KEYWORDS_PER_REVIEW <= 0 and KEYWORDS_OVERALL <= 0:
+                            keyword_res = {"per_review": [[] for _ in texts], "overall": []}
+                        else:
+                            try:
+                                keyword_res = extract_keywords_batch(
+                                    texts=texts,
+                                    per_review_top_n=KEYWORDS_PER_REVIEW,
+                                    overall_top_n=KEYWORDS_OVERALL,
+                                )
+                            except Exception as exc:
+                                st.warning(f"Keyword extraction failed: {exc}")
+                                keyword_res = {"per_review": [[] for _ in texts], "overall": []}
+
                     with st.spinner("Running emotion analysis on current set..."):
                         # 1) VA regression
                         va_by_review = [predict_va_single(t or "") for t in texts]
@@ -539,8 +560,11 @@ if st.session_state.search3_submit_clicked:
                         discrete_by_review = [predict_proba_single(t or "") for t in texts]
 
                     st.session_state.search3_preview_analysis = {
+                        "cluster_label": cluster_label,
                         "topic": topic_res,
                         "topic_summary": topic_summary_text,
+                        "topic_llm_by_review": {},
+                        "keywords": keyword_res,
                         "sentiment": sentiments,
                         "emotion": {
                             "va": va_overall,
