@@ -208,14 +208,14 @@ def fetch_g2_reviews(slug: str, limit: int = 20, actor_id: Optional[str] = None)
         client, actor = _ensure_client(actor_id=actor_id)
     except FetchError:
         # attempt a lightweight public fallback (may be blocked by G2)
-        return _try_g2_html_fallback(slug, limit=min(limit, 6))
+        return _try_g2_html_fallback(slug, limit=min(limit, 80))
 
     run_input = {"query": slug, "mode": "review", "limit": int(limit)}
     run = client.actor(actor).call(run_input=run_input)
     dsid = run.get("defaultDatasetId")
     if not dsid:
         # if the actor ran but produced no dataset, try fallback
-        return _try_g2_html_fallback(slug, limit=min(limit, 6))
+        return _try_g2_html_fallback(slug, limit=min(limit, 80))
 
     items = list(client.dataset(dsid).iterate_items())
     out = []

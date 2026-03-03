@@ -1,4 +1,6 @@
 import streamlit as st
+import hashlib
+import json
 
 from fetchers.google_play import search_google_play
 from fetchers.ios import search_ios
@@ -235,6 +237,25 @@ def _topic_summary_or_empty(
     return llm_topic_summary(cluster_label, top_topics_payload)
 
 
+def _reviews_signature(rows: list[dict] | None) -> str:
+    payload = []
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
+        payload.append(
+            {
+                "id": r.get("id"),
+                "title": r.get("title"),
+                "content": r.get("content"),
+                "date": r.get("date"),
+                "platform": r.get("platform"),
+                "reviewer": r.get("reviewer"),
+            }
+        )
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 # -----------------------------------------------------------------
 # Session state initialization
 # -----------------------------------------------------------------
@@ -451,7 +472,7 @@ if st.session_state.search3_submit_clicked:
 
         fetched = st.session_state.get("search3_fetched_reviews") or []
         # Defensive cleanup for previously cached/session results.
-        fetched = filter_english_reviews(fetched, limit=preview_limit)
+        fetched = filter_english_reviews(fetched, limit=None)
         st.session_state.search3_fetched_reviews = fetched
         platform = confirmed.get("platform")
         
@@ -565,6 +586,8 @@ if st.session_state.search3_submit_clicked:
                         "topic_summary": topic_summary_text,
                         "topic_llm_by_review": {},
                         "keywords": keyword_res,
+                        "reviews_signature": _reviews_signature(fetched),
+                        "review_count": len(fetched),
                         "sentiment": sentiments,
                         "emotion": {
                             "va": va_overall,
@@ -591,5 +614,12 @@ if st.session_state.search3_submit_clicked:
                 st.caption("Reviews are cached for 30 minutes in the app session (except Trustpilot). No inference is run without your explicit action.")
 
         analysis = st.session_state.get("search3_preview_analysis")
+        if analysis:
+            current_sig = _reviews_signature(st.session_state.get("search3_fetched_reviews") or [])
+            analysis_sig = str(analysis.get("reviews_signature") or "")
+            if not analysis_sig or analysis_sig != current_sig:
+                st.warning("Review set changed since last analysis. Please rerun analysis.")
+                st.session_state.search3_preview_analysis = None
+                analysis = None
         if analysis:
             render_analysis_results(analysis)

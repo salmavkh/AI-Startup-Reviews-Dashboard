@@ -88,37 +88,75 @@ def fetch_ios_reviews(app_id: str, limit: int = 20, country: str = "us") -> List
     if not app_id:
         return out
     try:
-        url = f"https://itunes.apple.com/rss/customerreviews/id={app_id}/json"
-        resp = _safe_get(url)
-        if not resp or resp.status_code != 200:
-            return out
-        jd = resp.json()
-        entries = jd.get("feed", {}).get("entry") or []
-        for e in (entries or [])[1:]:
+        seen = set()
+        max_pages = 10
+        for page in range(1, max_pages + 1):
             if len(out) >= limit:
                 break
-            title = (e.get("title") or {}).get("label") if isinstance(e.get("title"), dict) else e.get("title")
-            content = (e.get("content") or {}).get("label") if isinstance(e.get("content"), dict) else e.get("content")
-            rating = None
-            try:
-                rating = float((e.get("im:rating") or {}).get("label"))
-            except Exception:
-                rating = None
-            author = (e.get("author") or {}).get("name", {}).get("label") if isinstance((e.get("author") or {}).get("name"), dict) else None
-            date = (e.get("updated") or {}).get("label") if isinstance(e.get("updated"), dict) else None
-            if not is_english_review(title=title, content=content):
+
+            urls = [
+                f"https://itunes.apple.com/{country}/rss/customerreviews/page={page}/id={app_id}/sortby=mostrecent/json",
+                f"https://itunes.apple.com/rss/customerreviews/page={page}/id={app_id}/sortby=mostrecent/json?cc={country}",
+            ]
+            if page == 1:
+                urls.append(f"https://itunes.apple.com/rss/customerreviews/id={app_id}/json")
+
+            jd = None
+            for url in urls:
+                resp = _safe_get(url)
+                if not resp or resp.status_code != 200:
+                    continue
+                try:
+                    jd = resp.json()
+                    break
+                except Exception:
+                    jd = None
+                    continue
+
+            if jd is None:
                 continue
-            out.append(_normalize_review(
-                platform="iOS App Store",
-                platform_id=app_id,
-                review_id=None,
-                title=title,
-                content=content,
-                rating=rating,
-                date=date,
-                reviewer=author,
-                url=None,
-            ))
+
+            entries = jd.get("feed", {}).get("entry") or []
+            if not entries:
+                continue
+
+            page_added = 0
+            for e in (entries or [])[1:]:
+                if len(out) >= limit:
+                    break
+                title = (e.get("title") or {}).get("label") if isinstance(e.get("title"), dict) else e.get("title")
+                content = (e.get("content") or {}).get("label") if isinstance(e.get("content"), dict) else e.get("content")
+                rating = None
+                try:
+                    rating = float((e.get("im:rating") or {}).get("label"))
+                except Exception:
+                    rating = None
+                author = (e.get("author") or {}).get("name", {}).get("label") if isinstance((e.get("author") or {}).get("name"), dict) else None
+                date = (e.get("updated") or {}).get("label") if isinstance(e.get("updated"), dict) else None
+                if not is_english_review(title=title, content=content):
+                    continue
+
+                key = (str(title or "").strip(), str(content or "").strip(), str(date or "").strip(), str(author or "").strip())
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                out.append(_normalize_review(
+                    platform="iOS App Store",
+                    platform_id=app_id,
+                    review_id=None,
+                    title=title,
+                    content=content,
+                    rating=rating,
+                    date=date,
+                    reviewer=author,
+                    url=None,
+                ))
+                page_added += 1
+
+            if page_added == 0 and page > 1:
+                # Stop early if additional pages stop yielding new English items.
+                break
     except Exception:
         return out
     return out

@@ -129,10 +129,19 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
             if need <= 0:
                 break
             attempts = 0
-            while attempts < 2 and need > 0:
+            continuation_token = None
+            while attempts < 4 and need > 0:
                 attempts += 1
                 try:
-                    resp, _ = gp_reviews(package, lang=lang, country=cc, sort=Sort.NEWEST, count=need)
+                    count = min(200, max(need * 4, need + 40))
+                    resp, continuation_token = gp_reviews(
+                        package,
+                        lang=lang,
+                        country=cc,
+                        sort=Sort.NEWEST,
+                        count=count,
+                        continuation_token=continuation_token,
+                    )
                     if not resp:
                         break
                     for r in (resp or []):
@@ -161,9 +170,10 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
                         if len(out) >= limit:
                             break
                     need = limit - len(out)
-                    break
+                    if need <= 0 or not continuation_token:
+                        break
                 except Exception:
-                    if attempts >= 2:
+                    if attempts >= 4:
                         break
                     continue
         return out

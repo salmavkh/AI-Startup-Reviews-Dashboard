@@ -231,15 +231,54 @@ def fetch_reviews_uncached_tp(identifier: dict, limit: int = 5):
         return []
 
 
+def _review_identity(review: dict) -> tuple:
+    rid = str(review.get("id") or "").strip()
+    if rid:
+        return ("id", rid)
+    title = str(review.get("title") or "").strip().lower()
+    content = str(review.get("content") or "").strip().lower()
+    date = str(review.get("date") or "").strip()
+    reviewer = str(review.get("reviewer") or "").strip().lower()
+    return ("txt", title[:120], content[:280], date, reviewer)
+
+
+def _fetch_reviews_raw(platform: str, identifier: dict, limit: int = 5):
+    if platform == "Trustpilot":
+        return fetch_reviews_uncached_tp(identifier, limit=limit)
+    return fetch_reviews_cached_non_tp(platform, identifier, limit=limit)
+
+
 def fetch_reviews_for_ui(platform: str, identifier: dict, limit: int = 5):
     """Unified fetch used by preview + full fetch."""
-    rows = []
-    if platform == "Trustpilot":
-        rows = fetch_reviews_uncached_tp(identifier, limit=limit)
-    else:
-        rows = fetch_reviews_cached_non_tp(platform, identifier, limit=limit)
-    # Final hard gate: never return non-English reviews to page UI.
-    return filter_english_reviews(rows or [], limit=limit)
+    target = max(1, int(limit or 1))
+    # Escalating fetch sizes to top up English reviews.
+    attempt_limits = []
+    size = target
+    for _ in range(4):
+        capped = min(400, max(target, size))
+        if capped not in attempt_limits:
+            attempt_limits.append(capped)
+        size = int(size * 1.8) + 10
+
+    combined = []
+    seen = set()
+
+    for fetch_limit in attempt_limits:
+        rows = _fetch_reviews_raw(platform, identifier, limit=fetch_limit)
+        english_rows = filter_english_reviews(rows or [], limit=None)
+
+        for r in english_rows:
+            if not isinstance(r, dict):
+                continue
+            key = _review_identity(r)
+            if key in seen:
+                continue
+            seen.add(key)
+            combined.append(r)
+            if len(combined) >= target:
+                return combined[:target]
+
+    return combined[:target]
 
 
 # ===== Search result processing =====

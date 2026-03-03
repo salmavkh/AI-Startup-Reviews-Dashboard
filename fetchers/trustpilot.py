@@ -189,7 +189,7 @@ def fetch_trustpilot_reviews(slug: str, limit: int = 20) -> List[Dict[str, Any]]
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        while len(out) < limit and page < 8:
+        while len(out) < limit and page < 20:
             url = f"https://www.trustpilot.com/review/{slug}?page={page}"
             resp = _safe_get(url, headers=headers)
             if not resp or resp.status_code != 200:
