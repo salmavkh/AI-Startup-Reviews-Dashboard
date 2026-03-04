@@ -126,3 +126,85 @@ Return JSON with keys: label, explanation.
         label = "Topic summary unavailable"
 
     return {"label": label, "explanation": explanation}
+
+
+def _fallback_label_from_keywords(keywords: List[str], max_terms: int = 4) -> str:
+    terms = []
+    for w in (keywords or [])[: max(1, int(max_terms or 4))]:
+        token = str(w or "").strip()
+        if not token:
+            continue
+        terms.append(token.title())
+    if not terms:
+        return "General Topic"
+    return " / ".join(terms)
+
+
+def llm_label_topic_from_keywords(
+    cluster_label: str,
+    topic_id: int,
+    keywords: List[str],
+) -> str:
+    """Return a short high-level label from BERTopic top words."""
+    if int(topic_id) == -1:
+        return "Unassigned / Misc"
+
+    clean_keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    if not clean_keywords:
+        return "General Topic"
+
+    prompt = f"""
+You are labeling a BERTopic topic for an analytics dashboard.
+
+Cluster: {cluster_label}
+Topic ID: {topic_id}
+Top words: {", ".join(clean_keywords[:12])}
+
+Task:
+- Return one concise high-level label (max 6 words).
+- Use only the top words.
+- No explanation text.
+
+Return JSON with key: label
+"""
+    try:
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+        )
+        text = str(resp.choices[0].message.content or "").strip()
+        if not text:
+            return _fallback_label_from_keywords(clean_keywords)
+
+        parsed_payload = _parse_json_label_payload(text)
+        if isinstance(parsed_payload, dict):
+            label = str(parsed_payload.get("label") or "").strip()
+            if label:
+                return label
+
+        for line in [ln.strip() for ln in text.splitlines() if ln.strip()]:
+            if line.lower().startswith("label:"):
+                val = line.split(":", 1)[1].strip()
+                if val:
+                    return val
+        return _fallback_label_from_keywords(clean_keywords)
+    except Exception:
+        return _fallback_label_from_keywords(clean_keywords)
+
+
+def llm_label_topics_from_keywords(
+    cluster_label: str,
+    keywords_by_topic: Dict[int, List[str]],
+) -> Dict[int, str]:
+    """Batch label helper for topic_id -> high-level label."""
+    out: Dict[int, str] = {}
+    for tid in sorted(keywords_by_topic.keys()):
+        if int(tid) == -1:
+            continue
+        out[int(tid)] = llm_label_topic_from_keywords(
+            cluster_label=cluster_label,
+            topic_id=int(tid),
+            keywords=keywords_by_topic.get(int(tid)) or [],
+        )
+    return out

@@ -390,11 +390,19 @@ def render_analysis_results(analysis: dict):
     if isinstance(topic_payload, dict):
         topics_per_review = topic_payload.get("topics") or []
         topic_keywords_by_topic = topic_payload.get("keywords_by_topic") or {}
+        topic_labels_by_topic = topic_payload.get("topic_labels") or {}
         topic_probs = topic_payload.get("probs")
+        topic_coherence = topic_payload.get("coherence") or {}
+        raw_topic_rows = topic_payload.get("raw_topic_rows") or []
+        raw_review_rows = topic_payload.get("raw_review_rows") or []
     else:
         topics_per_review = []
         topic_keywords_by_topic = {}
+        topic_labels_by_topic = {}
         topic_probs = None
+        topic_coherence = {}
+        raw_topic_rows = []
+        raw_review_rows = []
 
     # Emotions: supports both legacy and nested format
     emo = analysis.get("emotion") or {}
@@ -791,6 +799,98 @@ def render_analysis_results(analysis: dict):
                         else:
                             st.caption("No strong keyword-matching examples in this sample.")
 
+            st.markdown("**Raw topic outputs (overall)**")
+            c_v_overall = topic_coherence.get("c_v_overall")
+            c_v_available = bool(topic_coherence.get("available"))
+            c_v_error = str(topic_coherence.get("error") or "").strip()
+            proxy_overall = _safe_float(topic_coherence.get("proxy_overall", 0.0))
+            mc = st.columns(3)
+            mc[0].metric("Topics found", f"{len([t for t in counts.keys() if int(t) != -1])}")
+            if c_v_overall is not None:
+                mc[1].metric("Coherence c_v", f"{_safe_float(c_v_overall):.3f}")
+            else:
+                mc[1].metric("Coherence c_v", "N/A")
+            mc[2].metric("Coherence proxy", f"{proxy_overall:.3f}")
+
+            if (not c_v_available) and c_v_error:
+                st.caption(f"c_v coherence unavailable in runtime: {c_v_error}")
+
+            if raw_topic_rows:
+                df_raw_topics = pd.DataFrame(raw_topic_rows)
+                # Primary overall topic table (clean UI): topic_id, size, top_words, coherence_c_v
+                primary_rows = []
+                for row in raw_topic_rows:
+                    topic_id = row.get("topic_id")
+                    size = int(row.get("count") or 0)
+                    top_words = str(row.get("words") or "").strip()
+                    topic_name = ""
+                    if topic_id is not None:
+                        topic_name = str(
+                            topic_labels_by_topic.get(int(topic_id))
+                            or topic_labels_by_topic.get(str(topic_id))
+                            or ""
+                        ).strip()
+                    if not topic_name and int(topic_id or -1) == -1:
+                        topic_name = "Unassigned / Misc"
+                    coherence_c_v = row.get("coherence_c_v")
+                    if coherence_c_v is not None:
+                        try:
+                            coherence_c_v = round(float(coherence_c_v), 3)
+                        except Exception:
+                            pass
+                    primary_rows.append(
+                        {
+                            "topic_id": topic_id,
+                            "size": size,
+                            "topic_name": topic_name,
+                            "top_words": top_words,
+                            "coherence_c_v": coherence_c_v,
+                        }
+                    )
+                st.dataframe(pd.DataFrame(primary_rows), hide_index=True, use_container_width=True)
+            else:
+                st.caption("No topic rows to display.")
+
+            with st.expander("Topic diagnostics (confidence/proxy/details)", expanded=False):
+                if raw_topic_rows:
+                    df_debug_topics = pd.DataFrame(raw_topic_rows)
+                    if "share" in df_debug_topics.columns:
+                        try:
+                            df_debug_topics["share"] = df_debug_topics["share"].astype(float).map(lambda x: f"{x:.1%}")
+                        except Exception:
+                            pass
+                    st.dataframe(df_debug_topics, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No topic diagnostics to display.")
+
+            with st.expander("Raw per-review topic assignments (overall set)", expanded=False):
+                if raw_review_rows:
+                    df_raw_reviews = pd.DataFrame(raw_review_rows)
+                    if "topic_id" in df_raw_reviews.columns:
+                        def _name_for_topic(value):
+                            try:
+                                tid = int(value)
+                            except Exception:
+                                return ""
+                            if tid == -1:
+                                return "Unassigned / Misc"
+                            return str(
+                                topic_labels_by_topic.get(tid)
+                                or topic_labels_by_topic.get(str(tid))
+                                or ""
+                            ).strip()
+                        df_raw_reviews["topic_name"] = df_raw_reviews["topic_id"].map(_name_for_topic)
+                    if "confidence" in df_raw_reviews.columns:
+                        try:
+                            df_raw_reviews["confidence"] = df_raw_reviews["confidence"].map(
+                                lambda x: (f"{float(x):.3f}" if x is not None else "")
+                            )
+                        except Exception:
+                            pass
+                    st.dataframe(df_raw_reviews, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("No per-review topic assignment rows to display.")
+
         if overall_keywords:
             st.markdown("**Keywords (overall)**")
             keyword_rows = []
@@ -1021,6 +1121,13 @@ def render_analysis_results(analysis: dict):
                     topic_words = []
                 else:
                     st.write(f"Topic ID: {topic_id}")
+                    topic_name = str(
+                        topic_labels_by_topic.get(topic_id)
+                        or topic_labels_by_topic.get(str(topic_id))
+                        or ""
+                    ).strip()
+                    if topic_name:
+                        st.write(f"Topic name: {topic_name}")
                     topic_words = topic_keywords_by_topic.get(topic_id, []) if isinstance(topic_keywords_by_topic, dict) else []
                     if topic_words:
                         st.write("Topic words: " + ", ".join(topic_words[:10]))
@@ -1045,39 +1152,6 @@ def render_analysis_results(analysis: dict):
 
                 if topic_confidence is not None:
                     st.write(f"Topic confidence: {max(0.0, min(1.0, float(topic_confidence))):.3f}")
-
-                # LLM rationale (best-effort; cached by review index)
-                cluster_label = str(analysis.get("cluster_label") or "").strip()
-                llm_cache = analysis.get("topic_llm_by_review")
-                if not isinstance(llm_cache, dict):
-                    llm_cache = {}
-                    analysis["topic_llm_by_review"] = llm_cache
-
-                if idx not in llm_cache and cluster_label:
-                    with st.spinner("Generating topic rationale..."):
-                        try:
-                            from inference.llm_topic_label import llm_label_topic
-
-                            llm_cache[idx] = llm_label_topic(
-                                cluster_label=cluster_label,
-                                topic_id=int(topic_id),
-                                keywords=topic_words[:10],
-                                review_text=(content or title or "")[:600],
-                            )
-                        except Exception as exc:
-                            llm_cache[idx] = {
-                                "label": "Topic rationale unavailable",
-                                "explanation": f"LLM error: {exc}",
-                            }
-
-                llm_item = llm_cache.get(idx) if isinstance(llm_cache, dict) else None
-                if isinstance(llm_item, dict):
-                    label = str(llm_item.get("label") or "").strip()
-                    explanation = str(llm_item.get("explanation") or "").strip()
-                    if label:
-                        st.write(f"LLM topic label: {label}")
-                    if explanation:
-                        st.write(f"Why: {explanation}")
 
             # Keywords below topic details
             review_keyword_rows = []

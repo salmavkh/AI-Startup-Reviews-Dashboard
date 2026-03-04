@@ -6,11 +6,12 @@ from fetchers.google_play import search_google_play
 from fetchers.ios import search_ios
 from fetchers.g2 import search_g2
 from fetchers.trustpilot import search_trustpilot
-from inference.topic import predict_topic_batch_all
+from inference.topic import discover_topics_batch
 from inference.sentiment import predict_single as predict_sentiment_single
 from inference.emotion import emotion_percentages, predict_proba_single
 from inference.va import predict_va_single, summarize_va
 from inference.llm_topic_summary import llm_topic_summary
+from inference.llm_topic_label import llm_label_topics_from_keywords
 from inference.keywords import extract_keywords_batch
 from fetchers.language_filter import filter_english_reviews
 
@@ -533,14 +534,30 @@ if st.session_state.search3_submit_clicked:
 
                     topic_res = None
                     topic_summary_text = ""
+                    topic_labels = {}
                     with st.spinner("Running topic model on preview..."):
                         try:
-                            topic_res = predict_topic_batch_all(texts, top_k_words=10)
+                            topic_res = discover_topics_batch(
+                                texts,
+                                top_k_words=10,
+                                min_topic_size=5,
+                            )
                         except Exception as exc:
                             st.error(f"Topic model failed: {exc}")
                             topic_res = None
 
                     if topic_res:
+                        with st.spinner("Generating high-level topic names..."):
+                            try:
+                                topic_labels = llm_label_topics_from_keywords(
+                                    cluster_label=cluster_label,
+                                    keywords_by_topic=topic_res.get("keywords_by_topic") or {},
+                                )
+                            except Exception as exc:
+                                st.warning(f"Topic naming failed: {exc}")
+                                topic_labels = {}
+                            topic_res["topic_labels"] = topic_labels
+
                         with st.spinner("Generating LLM topic summary..."):
                             try:
                                 topic_summary_text = _topic_summary_or_empty(
@@ -584,7 +601,6 @@ if st.session_state.search3_submit_clicked:
                         "cluster_label": cluster_label,
                         "topic": topic_res,
                         "topic_summary": topic_summary_text,
-                        "topic_llm_by_review": {},
                         "keywords": keyword_res,
                         "reviews_signature": _reviews_signature(fetched),
                         "review_count": len(fetched),
