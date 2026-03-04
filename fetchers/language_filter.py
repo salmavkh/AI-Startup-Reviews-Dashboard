@@ -95,16 +95,40 @@ def _english_heuristic(text: str) -> bool:
     return False
 
 
+def _strong_non_english_signal(text: str) -> bool:
+    """
+    Conservative rejection rule for obvious non-English text.
+    Used to override noisy language hints from data sources.
+    """
+    s = _clean_text(text)
+    if not s:
+        return False
+
+    tokens = re.findall(r"[a-z']+", s.lower())
+    if len(tokens) < 3:
+        return False
+
+    non_en_hits = sum(1 for tok in tokens if tok in _NON_EN_STOPWORDS)
+    en_hits = sum(1 for tok in tokens if tok in _EN_STOPWORDS)
+
+    # Clearly non-English when non-English stopwords dominate.
+    if non_en_hits >= 3 and non_en_hits >= (en_hits + 1):
+        return True
+    if non_en_hits >= 2 and (non_en_hits / max(1, len(tokens))) >= 0.25 and en_hits == 0:
+        return True
+    return False
+
+
 def is_english_review(title: str | None, content: str | None, language_hint: str | None = None) -> bool:
     """Return True when a review appears to be English."""
     lang = str(language_hint or "").strip().lower()
+    hinted_english = False
     if lang:
         # Common normalized forms.
-        if lang in {"en", "eng", "en-us", "en-gb", "en_au", "en-ca", "english"}:
-            return True
-        if lang.startswith("en-"):
-            return True
-        return False
+        if lang in {"en", "eng", "en-us", "en-gb", "en_au", "en-ca", "english"} or lang.startswith("en-"):
+            hinted_english = True
+        else:
+            return False
 
     text = f"{title or ''} {content or ''}".strip()
     if not text:
@@ -112,6 +136,10 @@ def is_english_review(title: str | None, content: str | None, language_hint: str
 
     cleaned = _clean_text(text)
     if len(cleaned) < 6:
+        return False
+
+    # Reject strong non-English signals even if source hints "en".
+    if _strong_non_english_signal(cleaned):
         return False
 
     # Prefer explicit language detector when available for longer content.
@@ -129,7 +157,7 @@ def is_english_review(title: str | None, content: str | None, language_hint: str
         except Exception:
             pass
 
-    if _detect_lang is not None and len(cleaned) >= 25:
+    if _detect_lang is not None and len(cleaned) >= 25 and not hinted_english:
         try:
             detected = _detect_lang(cleaned)
             if str(detected).lower() == "en":
@@ -140,7 +168,11 @@ def is_english_review(title: str | None, content: str | None, language_hint: str
         except Exception:
             pass
 
-    return _english_heuristic(cleaned)
+    heuristic_en = _english_heuristic(cleaned)
+    if hinted_english:
+        # English hint must still look English heuristically.
+        return heuristic_en
+    return heuristic_en
 
 
 def filter_english_reviews(reviews: List[Dict[str, Any]], limit: int | None = None) -> List[Dict[str, Any]]:
