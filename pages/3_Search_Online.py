@@ -35,13 +35,13 @@ st.markdown(
     """
     <style>
       .field-title {
-        font-size: 34px;
+        font-size: 24px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
 
       .section-title {
-        font-size: 34px;
+        font-size: 24px;
         font-weight: 400;
         margin: 0 0 10px 0;
       }
@@ -72,7 +72,7 @@ st.markdown(
       }
 
       .result-option-name {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: 500;
         line-height: 1.2;
       }
@@ -84,20 +84,20 @@ st.markdown(
       }
 
       .none-option {
-        font-size: 32px;
+        font-size: 20px;
         line-height: 1.2;
         margin-top: 5px;
       }
 
       .company-header {
-        font-size: 50px;
+        font-size: 42px;
         font-weight: 700;
         margin: 26px 0 4px 0;
       }
 
       .fetched-count {
         text-align: right;
-        font-size: 32px;
+        font-size: 24px;
         margin-top: 30px;
       }
 
