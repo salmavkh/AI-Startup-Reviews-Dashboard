@@ -418,6 +418,27 @@ def render_analysis_results(analysis: dict):
             margin-bottom: 16px;
             width: 100%;
           }
+          div[data-testid="stPopover"] button {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            min-height: 0 !important;
+            line-height: 1 !important;
+            color: #262626 !important;
+          }
+          div[data-testid="stPopover"] button:hover {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+          div[data-testid="stPopover"] button:focus {
+            outline: none !important;
+            box-shadow: none !important;
+          }
+          div[data-testid="stPopover"] button svg {
+            display: none !important;
+          }
         </style>
         """,
         unsafe_allow_html=True,
@@ -589,6 +610,37 @@ def render_analysis_results(analysis: dict):
             if len(rows) >= n:
                 break
         return rows[:n]
+
+    def _emotion_bar_height(num_items: int) -> int:
+        # Keep enough vertical room so all top-10 labels are visible.
+        return max(360, int(num_items) * 38 + 40)
+
+    distance_info_text = (
+        "Distance calculation: this ranks emotions by directly measuring how close the review's "
+        "valence-arousal point is to each emotion anchor in VA space. Smaller distance means higher score."
+    )
+    prediction_info_text = (
+        "Model prediction: this uses the trained discrete-emotion model that outputs emotion scores directly "
+        "from the review text. It learns multi-emotion patterns beyond pure VA distance."
+    )
+
+    def _render_graph_subheader(title: str, info_text: str):
+        cols = st.columns([20, 1], gap="small")
+        with cols[0]:
+            st.markdown(
+                f"<div style='font-size:16px;font-weight:400;line-height:1.2;color:#31333F;'>{html.escape(title)}</div>",
+                unsafe_allow_html=True,
+            )
+        with cols[1]:
+            if hasattr(st, "popover"):
+                with st.popover("ⓘ"):
+                    st.write(info_text)
+            else:
+                st.caption("ⓘ")
+        st.markdown(
+            "<div style='border-top:1px solid #2f2f2f;margin:4px 0 14px 0;'></div>",
+            unsafe_allow_html=True,
+        )
 
     # Emotions: supports both legacy and nested format
     emo = analysis.get("emotion") or {}
@@ -941,7 +993,7 @@ def render_analysis_results(analysis: dict):
                                 x=alt.X("score:Q", title="Avg intensity"),
                                 tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
                             )
-                            .properties(height=260)
+                            .properties(height=_emotion_bar_height(len(df)))
                         )
                         st.altair_chart(chart, use_container_width=True)
                     else:
@@ -1350,7 +1402,7 @@ def render_analysis_results(analysis: dict):
                         detail_cols = st.columns(2, gap="large")
                         with detail_cols[0]:
                             st.markdown("Emotions intensity")
-                            st.caption("By distance calculation")
+                            _render_graph_subheader("By distance calculation", distance_info_text)
                             top10_distance = top10.copy()
                             if not top10_distance.empty:
                                 top10_distance["distance_score"] = 1.0 / (1.0 + top10_distance["distance"].astype(float))
@@ -1367,7 +1419,7 @@ def render_analysis_results(analysis: dict):
                                                 alt.Tooltip("distance_score:Q", format=".3f"),
                                             ],
                                         )
-                                        .properties(height=220)
+                                        .properties(height=_emotion_bar_height(len(top10_distance)))
                                     )
                                     st.altair_chart(d_chart, use_container_width=True)
                                 else:
@@ -1379,7 +1431,7 @@ def render_analysis_results(analysis: dict):
                                     )
                         with detail_cols[1]:
                             st.markdown("Emotions intensity")
-                            st.caption("By model prediction")
+                            _render_graph_subheader("By model prediction", prediction_info_text)
                             if dist:
                                 pred_items = _top_n_emotions(dist, n=10)
                                 pred_df = pd.DataFrame(pred_items, columns=["emotion", "score"])
@@ -1392,7 +1444,7 @@ def render_analysis_results(analysis: dict):
                                             x=alt.X("score:Q", title="Score (0-1)"),
                                             tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
                                         )
-                                        .properties(height=220)
+                                        .properties(height=_emotion_bar_height(len(pred_df)))
                                     )
                                     st.altair_chart(p_chart, use_container_width=True)
                                 else:
@@ -1403,6 +1455,7 @@ def render_analysis_results(analysis: dict):
 
                 if dist and not rendered_prediction_chart:
                     st.markdown("Emotions intensity")
+                    _render_graph_subheader("By model prediction", prediction_info_text)
                     pred_items = _top_n_emotions(dist, n=10)
                     pred_df = pd.DataFrame(pred_items, columns=["emotion", "score"])
                     if alt is not None:
@@ -1414,7 +1467,7 @@ def render_analysis_results(analysis: dict):
                                 x=alt.X("score:Q", title="Score (0-1)"),
                                 tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
                             )
-                            .properties(height=220)
+                            .properties(height=_emotion_bar_height(len(pred_df)))
                         )
                         st.altair_chart(p_chart, use_container_width=True)
                     else:

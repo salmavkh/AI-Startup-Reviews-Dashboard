@@ -35,14 +35,14 @@ st.markdown(
     """
     <style>
       .field-title {
-        font-size: 20px;
+        font-size: 16px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
 
       .section-title {
         font-size: 20px;
-        font-weight: 400;
+        font-weight: 500;
         margin: 0 0 10px 0;
       }
 
@@ -90,23 +90,24 @@ st.markdown(
       }
 
       .company-header {
-        font-size: 42px;
+        font-size: 22px;
         font-weight: 700;
-        margin: 26px 0 4px 0;
+        margin: 2px 0 8px 0;
       }
 
       .fetched-count {
         text-align: right;
-        font-size: 24px;
-        margin-top: 30px;
+        font-size: 16px;
+        margin-top: 6px;
       }
 
       .preview-card {
         border: 1px solid rgba(0, 0, 0, 0.12);
         border-radius: 12px;
-        min-height: 200px;
+        min-height: 120px;
         padding: 14px;
         background: #ffffff;
+        margin-bottom: 14px;
       }
 
       .preview-card-title {
@@ -125,6 +126,13 @@ st.markdown(
         margin: 12px 0 22px 0;
       }
 
+      .vertical-divider {
+        width: 1px;
+        background: #d9d9d9;
+        min-height: 980px;
+        margin: 0 auto;
+      }
+
       div[data-testid="stButton"] button[kind="primary"] {
         background-color: #000000;
         border: 1px solid #000000;
@@ -134,6 +142,17 @@ st.markdown(
       div[data-testid="stButton"] button[kind="primary"]:hover {
         background-color: #171717;
         border-color: #171717;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"] {
+        background-color: #ffffff;
+        border: 1px solid #ffffff;
+        color: #2e3340;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"]:hover {
+        background-color: #ffffff;
+        border-color: #ffffff;
       }
     </style>
     """,
@@ -408,9 +427,13 @@ def _render_option_card(r: dict):
         )
 
 
-search_cols = st.columns(2, gap="large")
+layout_cols = st.columns([1.0, 0.03, 1.1], gap="large")
+left_panel, divider_panel, right_panel = layout_cols
 
-with search_cols[0]:
+with divider_panel:
+    st.markdown("<div class='vertical-divider'></div>", unsafe_allow_html=True)
+
+with left_panel:
     st.markdown('<div class="field-title">Search your company name</div>', unsafe_allow_html=True)
     query = st.text_input(
         "Search your company name",
@@ -485,8 +508,8 @@ with search_cols[0]:
 
             st.session_state.search3_results = process_search_results(candidates, platform)
 
-with search_cols[1]:
     if st.session_state.search3_search_clicked:
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         st.markdown('<div class="section-title">Select your company from this possible results:</div>', unsafe_allow_html=True)
         results = st.session_state.search3_results or []
 
@@ -573,89 +596,98 @@ for msg in st.session_state.search3_errors:
     st.warning(msg)
 
 
-if st.session_state.search3_submit_clicked:
-    confirmed = st.session_state.get("search3_confirmed_company")
-    if confirmed:
-        identifier = extract_identifier_info(confirmed)
-        fetch_key = {
-            "platform": confirmed.get("platform"),
-            "identifier": (identifier[1] if identifier else None),
-            "limit": int(st.session_state.get("search3_num_reviews", 20)),
-        }
+with right_panel:
+    if st.session_state.search3_submit_clicked:
+        confirmed = st.session_state.get("search3_confirmed_company")
+        if confirmed:
+            identifier = extract_identifier_info(confirmed)
+            fetch_key = {
+                "platform": confirmed.get("platform"),
+                "identifier": (identifier[1] if identifier else None),
+                "limit": int(st.session_state.get("search3_num_reviews", 20)),
+            }
 
-        if st.session_state.get("search3_fetched_for") != fetch_key:
-            with st.spinner(f"Fetching up to {fetch_key['limit']} reviews..."):
-                fetched = fetch_reviews_for_ui(
-                    confirmed.get("platform"),
-                    confirmed,
-                    limit=fetch_key["limit"],
+            if st.session_state.get("search3_fetched_for") != fetch_key:
+                with st.spinner(f"Fetching up to {fetch_key['limit']} reviews..."):
+                    fetched = fetch_reviews_for_ui(
+                        confirmed.get("platform"),
+                        confirmed,
+                        limit=fetch_key["limit"],
+                    )
+                fetched = filter_english_reviews(fetched or [], limit=None)
+                st.session_state.search3_fetched_reviews = fetched
+                st.session_state.search3_fetched_for = fetch_key
+                st.session_state.search3_preview_analysis = None
+                st.session_state.search3_review_carousel_start = 0
+
+            fetched = st.session_state.get("search3_fetched_reviews") or []
+
+            header_cols = st.columns([3, 2])
+            with header_cols[0]:
+                st.markdown(
+                    f"<div class='company-header'>{html.escape(str(confirmed.get('name') or '(name not available)'))}</div>",
+                    unsafe_allow_html=True,
                 )
-            fetched = filter_english_reviews(fetched or [], limit=None)
-            st.session_state.search3_fetched_reviews = fetched
-            st.session_state.search3_fetched_for = fetch_key
-            st.session_state.search3_preview_analysis = None
-            st.session_state.search3_review_carousel_start = 0
+            with header_cols[1]:
+                st.markdown(
+                    f"<div class='fetched-count'>Fetched: {len(fetched)} reviews</div>",
+                    unsafe_allow_html=True,
+                )
 
-        fetched = st.session_state.get("search3_fetched_reviews") or []
+            if not fetched:
+                st.warning("No reviews were fetched for this company. Try another result or lower the review count.")
+            else:
+                total_reviews = len(fetched)
+                window_size = 5
+                max_start = max(0, total_reviews - window_size)
+                start = int(st.session_state.get("search3_review_carousel_start", 0))
+                start = max(0, min(start, max_start))
 
-        header_cols = st.columns([5, 2])
-        with header_cols[0]:
-            st.markdown(
-                f"<div class='company-header'>{html.escape(str(confirmed.get('name') or '(name not available)'))}</div>",
-                unsafe_allow_html=True,
-            )
-        with header_cols[1]:
-            st.markdown(
-                f"<div class='fetched-count'>Fetched: {len(fetched)} reviews</div>",
-                unsafe_allow_html=True,
-            )
+                nav_cols = st.columns([1, 1, 4], gap="small")
+                with nav_cols[0]:
+                    prev_clicked = st.button(
+                        "Prev",
+                        key="search3_prev_page",
+                        use_container_width=True,
+                        disabled=(start <= 0),
+                    )
+                with nav_cols[1]:
+                    next_clicked = st.button(
+                        "Next",
+                        key="search3_next_page",
+                        use_container_width=True,
+                        disabled=(start >= max_start),
+                    )
 
-        st.markdown("<div class='divider-line'></div>", unsafe_allow_html=True)
+                if prev_clicked:
+                    start = max(0, start - window_size)
+                if next_clicked:
+                    start = min(max_start, start + window_size)
+                st.session_state.search3_review_carousel_start = start
 
-        if not fetched:
-            st.warning("No reviews were fetched for this company. Try another result or lower the review count.")
-        else:
-            total = len(fetched)
-            start = int(st.session_state.get("search3_review_carousel_start", 0))
-            start = max(0, min(start, max(0, total - 1)))
-            st.session_state.search3_review_carousel_start = start
+                end = min(total_reviews, start + window_size)
+                with nav_cols[2]:
+                    st.caption(f"Showing {start + 1}-{end} of {total_reviews} fetched reviews.")
 
-            max_cards = min(3, total)
-            show_idx = [((start + i) % total) for i in range(max_cards)]
-
-            carousel_cols = st.columns([1, 10, 1], gap="small")
-            with carousel_cols[0]:
-                if st.button("<", key="search3_prev_reviews", use_container_width=True):
-                    st.session_state.search3_review_carousel_start = (start - 1) % total
-                    st.rerun()
-
-            with carousel_cols[1]:
-                review_cols = st.columns(max_cards, gap="large")
-                for ix, review_idx in enumerate(show_idx):
-                    row = fetched[review_idx] or {}
-                    title = (row.get("title") or f"Review {review_idx + 1}").strip()
+                for review_idx, row in enumerate(fetched[start:end], start=start + 1):
+                    row = row or {}
+                    title = (row.get("title") or f"Review {review_idx}").strip()
                     content = (row.get("content") or "").strip()
-                    snippet = content[:180] + ("..." if len(content) > 180 else "")
+                    snippet = content[:220] + ("..." if len(content) > 220 else "")
+                    st.markdown(
+                        "<div class='preview-card'>"
+                        f"<div class='preview-card-title'>{html.escape(title)}</div>"
+                        f"<div class='preview-card-content'>{html.escape(snippet or '(no text)')}</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
 
-                    with review_cols[ix]:
-                        st.markdown(
-                            "<div class='preview-card'>"
-                            f"<div class='preview-card-title'>{html.escape(title)}</div>"
-                            f"<div class='preview-card-content'>{html.escape(snippet or '(no text)')}</div>"
-                            "</div>",
-                            unsafe_allow_html=True,
-                        )
-
-            with carousel_cols[2]:
-                if st.button(">", key="search3_next_reviews", use_container_width=True):
-                    st.session_state.search3_review_carousel_start = (start + 1) % total
-                    st.rerun()
-
-            st.write("")
-            center_cols = st.columns([2, 3, 2])
-            with center_cols[1]:
-                if st.button("Analyze", type="primary", use_container_width=True):
-                    st.session_state.search3_preview_analysis = _run_analysis_on_rows(fetched)
+                analyze_cols = st.columns([2, 3, 2])
+                with analyze_cols[1]:
+                    if st.button("Analyze", type="primary", use_container_width=True):
+                        st.session_state.search3_preview_analysis = _run_analysis_on_rows(fetched)
+    else:
+        st.caption("Select and submit a company to preview fetched reviews here.")
 
 analysis = st.session_state.get("search3_preview_analysis")
 if analysis:
