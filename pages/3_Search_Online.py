@@ -35,28 +35,28 @@ st.markdown(
     """
     <style>
       .field-title {
-        font-size: 24px;
+        font-size: 20px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
 
       .section-title {
-        font-size: 24px;
+        font-size: 20px;
         font-weight: 400;
         margin: 0 0 10px 0;
       }
 
       .result-option-card {
         border: 1px solid rgba(0, 0, 0, 0.12);
-        border-radius: 12px;
-        padding: 12px;
-        margin-bottom: 12px;
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 10px;
         background: #ffffff;
       }
 
       .result-option-card.selected {
         border: 2px solid #000000;
-        padding: 11px;
+        padding: 9px;
       }
 
       .result-option-row {
@@ -66,27 +66,27 @@ st.markdown(
       }
 
       .result-option-logo {
-        width: 48px;
-        height: 48px;
-        flex: 0 0 48px;
+        width: 40px;
+        height: 40px;
+        flex: 0 0 40px;
       }
 
       .result-option-name {
-        font-size: 16px;
+        font-size: 14px;
         font-weight: 500;
         line-height: 1.2;
       }
 
       .result-option-subtitle {
-        font-size: 13px;
+        font-size: 12px;
         color: #6f6f6f;
-        margin-top: 4px;
+        margin-top: 2px;
       }
 
       .none-option {
-        font-size: 20px;
+        font-size: 16px;
         line-height: 1.2;
-        margin-top: 5px;
+        margin-top: 2px;
       }
 
       .company-header {
@@ -482,9 +482,8 @@ with search_cols[0]:
             st.session_state.search3_results = process_search_results(candidates, platform)
 
 with search_cols[1]:
-    st.markdown('<div class="section-title">Select your company from this possible results:</div>', unsafe_allow_html=True)
-
     if st.session_state.search3_search_clicked:
+        st.markdown('<div class="section-title">Select your company from this possible results:</div>', unsafe_allow_html=True)
         results = st.session_state.search3_results or []
 
         if results:
