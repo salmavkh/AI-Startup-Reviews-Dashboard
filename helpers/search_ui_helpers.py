@@ -666,10 +666,11 @@ def render_analysis_results(analysis: dict):
         top_items: list[tuple[str, float]],
         key_prefix: str,
         sentiment_label: str = "Uncertain",
+        title_text: str = "Top emotion",
     ):
         if not top_items:
             return
-        st.markdown("Top emotion")
+        st.markdown(title_text)
         ordered = [(str(name).title(), _safe_float(score)) for name, score in top_items]
         light_color, dark_color = _sentiment_palette(sentiment_label)
         df_bubble = pd.DataFrame(
@@ -1302,6 +1303,34 @@ def render_analysis_results(analysis: dict):
         # Keep enough vertical room so all top-10 labels are visible.
         return max(360, int(num_items) * 38 + 40)
 
+    def _overall_distance_scores_from_va(va_rows: list | None) -> dict[str, float]:
+        """Average distance-derived emotion scores over all reviews with VA points."""
+        if not isinstance(va_rows, list) or not va_rows:
+            return {}
+
+        sums: dict[str, float] = {}
+        counts_local: dict[str, int] = {}
+        for point in va_rows:
+            if not isinstance(point, dict):
+                continue
+            v = _safe_float(point.get("valence", 0.0))
+            a = _safe_float(point.get("arousal", 0.0))
+            rows, _missing = _build_emotion_distance_rows(v, a)
+            for row in rows:
+                emo = str(row.get("emotion") or "").strip().lower()
+                if not emo:
+                    continue
+                d = _safe_float(row.get("distance"), 0.0)
+                score = 1.0 / (1.0 + max(0.0, d))
+                sums[emo] = sums.get(emo, 0.0) + score
+                counts_local[emo] = counts_local.get(emo, 0) + 1
+
+        out = {}
+        for emo, total in sums.items():
+            n_local = max(1, int(counts_local.get(emo, 0)))
+            out[emo] = float(total) / float(n_local)
+        return out
+
     def _parse_topic_llm_summary(summary_text: str) -> tuple[str, list[str]]:
         text = str(summary_text or "").strip()
         if not text:
@@ -1514,13 +1543,31 @@ def render_analysis_results(analysis: dict):
                         top_items,
                         key_prefix="overall",
                         sentiment_label=overall_sentiment_label,
+                        title_text="Top emotion (model)",
                     )
+                    model_top_name = str(top_items[0][0]).strip().title()
+                    distance_top_name = None
+                    if has_va:
+                        dist_scores_overall = _overall_distance_scores_from_va(per_review_va if has_va else [])
+                        top_dist_overall = _top_n_emotions(dist_scores_overall, n=1) if dist_scores_overall else []
+                        if top_dist_overall:
+                            distance_top_name = str(top_dist_overall[0][0]).strip().title()
+                    if distance_top_name:
+                        if model_top_name.lower() == distance_top_name.lower():
+                            st.caption(f"Model vs distance: match ({model_top_name}).")
+                        else:
+                            st.caption(
+                                f"Model vs distance: differs (model: {model_top_name}, distance: {distance_top_name})."
+                            )
 
-            with st.expander("See how we calculate the emotion", expanded=True):
-                st.markdown(
-                    "- Valence -> how positive or negative the review is (pleasant <-> unpleasant)\n"
-                    "- Arousal -> how intense or emotionally charged the review is (excited <-> calm)\n\n"
-                    "These help us understand not just what users feel, but also how strongly they feel it."
+                with st.expander("See how we calculate the emotion", expanded=True):
+                    st.markdown(
+                    "1. Valence → measures whether a review leans positive or negative "
+                    "(pleasant ↔ unpleasant).\n"
+                    "2. Arousal → measures emotional intensity, from activated to calm "
+                    "(excited ↔ calm).\n\n"
+                    "Together, Valence and Arousal place each review in emotional space, "
+                    "so we capture both emotion type and strength."
                 )
 
             if emo_va:
@@ -1753,25 +1800,58 @@ def render_analysis_results(analysis: dict):
                     else:
                         st.bar_chart(q_df, x="quadrant", y="count", use_container_width=True)
 
-            if emo_pct:
-                st.markdown("Emotions intensity")
-                top_items = _top_n_emotions(emo_pct, n=10)
-                if top_items:
-                    df = pd.DataFrame(top_items, columns=["emotion", "score"])
-                    if alt is not None:
-                        chart = (
-                            alt.Chart(df)
-                            .mark_bar(color="#1976d2")
-                            .encode(
-                                y=alt.Y("emotion:N", sort="-x", title="Emotion"),
-                                x=alt.X("score:Q", title="Avg intensity"),
-                                tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
+            if emo_pct or has_va:
+                detail_cols = st.columns(2, gap="large")
+                with detail_cols[0]:
+                    st.markdown("Emotions intensity")
+                    _render_graph_subheader("By distance calculation", distance_info_text)
+                    overall_dist = _overall_distance_scores_from_va(per_review_va if has_va else [])
+                    if overall_dist:
+                        top_dist = _top_n_emotions(overall_dist, n=10)
+                        df_dist = pd.DataFrame(top_dist, columns=["emotion", "score"])
+                        avg_dist = float(df_dist["score"].mean()) if not df_dist.empty else 0.0
+                        st.caption(f"Average score: {avg_dist:.3f}")
+                        if alt is not None:
+                            d_chart = (
+                                alt.Chart(df_dist)
+                                .mark_bar(color="#1976d2")
+                                .encode(
+                                    y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                                    x=alt.X("score:Q", title="Score"),
+                                    tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
+                                )
+                                .properties(height=_emotion_bar_height(len(df_dist)))
                             )
-                            .properties(height=_emotion_bar_height(len(df)))
-                        )
-                        st.altair_chart(chart, use_container_width=True)
+                            st.altair_chart(d_chart, use_container_width=True)
+                        else:
+                            st.bar_chart(df_dist, x="emotion", y="score", use_container_width=True)
                     else:
-                        st.bar_chart(df, x="emotion", y="score", use_container_width=True)
+                        st.caption("Distance-based view unavailable for this set.")
+
+                with detail_cols[1]:
+                    st.markdown("Emotions intensity")
+                    _render_graph_subheader("By model prediction", prediction_info_text)
+                    top_pred = _top_n_emotions(emo_pct, n=10) if emo_pct else []
+                    if top_pred:
+                        df_pred = pd.DataFrame(top_pred, columns=["emotion", "score"])
+                        avg_pred = float(df_pred["score"].mean()) if not df_pred.empty else 0.0
+                        st.caption(f"Average score: {avg_pred:.3f}")
+                        if alt is not None:
+                            p_chart = (
+                                alt.Chart(df_pred)
+                                .mark_bar(color="#1976d2")
+                                .encode(
+                                    y=alt.Y("emotion:N", sort="-x", title="Emotion"),
+                                    x=alt.X("score:Q", title="Score (0-1)"),
+                                    tooltip=["emotion", alt.Tooltip("score:Q", format=".3f")],
+                                )
+                                .properties(height=_emotion_bar_height(len(df_pred)))
+                            )
+                            st.altair_chart(p_chart, use_container_width=True)
+                        else:
+                            st.bar_chart(df_pred, x="emotion", y="score", use_container_width=True)
+                    else:
+                        st.caption("Model-based view unavailable for this set.")
         else:
             st.caption("No overall emotion analysis to show yet.")
 
@@ -1848,7 +1928,9 @@ def render_analysis_results(analysis: dict):
                                     st.write("")
                                     continue
                                 ex = row_items[cidx]
-                                topic_head = f"{ex.get('topic_name')} ({int(ex.get('topic_id', -1))})"
+                                tid = int(ex.get("topic_id", -1))
+                                tname = str(ex.get("topic_name") or "").strip() or f"Topic {tid}"
+                                topic_head = f"Topic {tid}: {tname}"
                                 st.markdown(f"**{html.escape(topic_head)}**")
                                 if ex.get("top_words"):
                                     st.caption(f"Top words: {ex.get('top_words')}")
@@ -2047,13 +2129,36 @@ def render_analysis_results(analysis: dict):
                             top_emotions,
                             key_prefix="per_review",
                             sentiment_label=s_label,
+                            title_text="Top emotion (model)",
                         )
+                        model_top_name = str(top_emotions[0][0]).strip().title()
+                        distance_top_name = None
+                        if va_point:
+                            try:
+                                _rows_note, _ = _build_emotion_distance_rows(
+                                    _safe_float(va_point.get("valence", 0.0)),
+                                    _safe_float(va_point.get("arousal", 0.0)),
+                                )
+                                if _rows_note:
+                                    distance_top_name = str(_rows_note[0].get("emotion") or "").strip().title()
+                            except Exception:
+                                distance_top_name = None
+                        if distance_top_name:
+                            if model_top_name.lower() == distance_top_name.lower():
+                                st.caption(f"Model vs distance: match ({model_top_name}).")
+                            else:
+                                st.caption(
+                                    f"Model vs distance: differs (model: {model_top_name}, distance: {distance_top_name})."
+                                )
 
                 with st.expander("See how we calculate the emotion", expanded=True):
                     st.markdown(
-                        "- Valence -> how positive or negative the review is (pleasant <-> unpleasant)\n"
-                        "- Arousal -> how intense or emotionally charged the review is (excited <-> calm)\n\n"
-                        "These help us understand not just what users feel, but also how strongly they feel it."
+                        "1. Valence → measures whether a review leans positive or negative "
+                        "(pleasant ↔ unpleasant).\n"
+                        "2. Arousal → measures emotional intensity, from activated to calm "
+                        "(excited ↔ calm).\n\n"
+                        "Together, Valence and Arousal place each review in emotional space, "
+                        "so we capture both emotion type and strength."
                     )
 
                 if va_point:
