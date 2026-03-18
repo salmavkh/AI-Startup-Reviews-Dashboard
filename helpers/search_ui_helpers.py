@@ -916,12 +916,22 @@ def render_analysis_results(analysis: dict):
                 st.markdown("**Topic name + top words**")
                 for _, row in df_pie.iterrows():
                     label = str(row.get("legend_label") or "")
+                    topic_name = str(row.get("topic_name") or "").strip()
+                    top_words = str(row.get("top_words") or "").strip()
                     dot_color = color_map.get(label, "#4E79A7")
+                    if topic_name and top_words:
+                        legend_html = (
+                            f"<strong>{html.escape(topic_name)}</strong>: {html.escape(top_words)}"
+                        )
+                    elif topic_name:
+                        legend_html = f"<strong>{html.escape(topic_name)}</strong>"
+                    else:
+                        legend_html = html.escape(label)
                     st.markdown(
                         "<div style='display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;'>"
                         f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
                         f"margin-top:6px;background:{dot_color};flex:0 0 10px;'></span>"
-                        f"<span style='font-size:14px;line-height:1.35;color:#2f3340;'>{html.escape(label)}</span>"
+                        f"<span style='font-size:14px;line-height:1.35;color:#2f3340;'>{legend_html}</span>"
                         "</div>",
                         unsafe_allow_html=True,
                     )
@@ -1508,8 +1518,8 @@ def render_analysis_results(analysis: dict):
 
             with st.expander("See how we calculate the emotion", expanded=True):
                 st.markdown(
-                    "- Valence -> how positive or negative the review is\n"
-                    "- Arousal -> how intense or emotionally charged the review is\n\n"
+                    "- Valence -> how positive or negative the review is (pleasant <-> unpleasant)\n"
+                    "- Arousal -> how intense or emotionally charged the review is (excited <-> calm)\n\n"
                     "These help us understand not just what users feel, but also how strongly they feel it."
                 )
 
@@ -2041,8 +2051,8 @@ def render_analysis_results(analysis: dict):
 
                 with st.expander("See how we calculate the emotion", expanded=True):
                     st.markdown(
-                        "- Valence -> how positive or negative the review is\n"
-                        "- Arousal -> how intense or emotionally charged the review is\n\n"
+                        "- Valence -> how positive or negative the review is (pleasant <-> unpleasant)\n"
+                        "- Arousal -> how intense or emotionally charged the review is (excited <-> calm)\n\n"
                         "These help us understand not just what users feel, but also how strongly they feel it."
                     )
 
