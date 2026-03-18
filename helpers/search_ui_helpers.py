@@ -1331,6 +1331,80 @@ def render_analysis_results(analysis: dict):
             out[emo] = float(total) / float(n_local)
         return out
 
+    def _overall_model_top_emotion_confidence(per_review_dist_rows: list | None) -> float | None:
+        """Average top emotion probability across reviews (model-based)."""
+        if not isinstance(per_review_dist_rows, list) or not per_review_dist_rows:
+            return None
+        vals = []
+        for row in per_review_dist_rows:
+            if not isinstance(row, dict) or not row:
+                continue
+            probs = []
+            for v in row.values():
+                try:
+                    probs.append(float(v))
+                except Exception:
+                    continue
+            if probs:
+                vals.append(max(0.0, min(1.0, max(probs))))
+        if not vals:
+            return None
+        return float(sum(vals) / len(vals))
+
+    def _overall_distance_top_emotion_confidence(va_rows: list | None) -> float | None:
+        """Average top distance-derived emotion score across reviews."""
+        if not isinstance(va_rows, list) or not va_rows:
+            return None
+        vals = []
+        for point in va_rows:
+            if not isinstance(point, dict):
+                continue
+            v = _safe_float(point.get("valence", 0.0))
+            a = _safe_float(point.get("arousal", 0.0))
+            rows, _missing = _build_emotion_distance_rows(v, a)
+            if not rows:
+                continue
+            d = _safe_float(rows[0].get("distance"), 0.0)
+            score = 1.0 / (1.0 + max(0.0, d))
+            vals.append(max(0.0, min(1.0, score)))
+        if not vals:
+            return None
+        return float(sum(vals) / len(vals))
+
+    def _overall_topic_assignment_confidence(topic_prob_rows, raw_rows: list | None) -> float | None:
+        """Average per-review topic assignment confidence."""
+        vals = []
+
+        if topic_prob_rows is not None:
+            try:
+                for row in topic_prob_rows:
+                    if hasattr(row, "__len__") and not isinstance(row, (str, bytes)):
+                        probs = []
+                        for x in row:
+                            try:
+                                probs.append(float(x))
+                            except Exception:
+                                continue
+                        if probs:
+                            vals.append(max(0.0, min(1.0, max(probs))))
+                    else:
+                        vals.append(max(0.0, min(1.0, float(row))))
+            except Exception:
+                vals = []
+
+        if not vals and isinstance(raw_rows, list):
+            for row in raw_rows:
+                if not isinstance(row, dict):
+                    continue
+                conf = row.get("confidence")
+                if conf is None:
+                    continue
+                vals.append(max(0.0, min(1.0, _safe_float(conf, 0.0))))
+
+        if not vals:
+            return None
+        return float(sum(vals) / len(vals))
+
     def _parse_topic_llm_summary(summary_text: str) -> tuple[str, list[str]]:
         text = str(summary_text or "").strip()
         if not text:
@@ -1460,7 +1534,7 @@ def render_analysis_results(analysis: dict):
     with tabs[0]:
         st.markdown("<div class='analysis-title'>Sentiment analysis</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='analysis-subtitle'>See whether people feel positively or negatively about your AI startup at a glance.</div>",
+            "<div class='analysis-subtitle'>Quickly see whether overall sentiment leans positive or negative.</div>",
             unsafe_allow_html=True,
         )
         pos = neg = unc = 0
@@ -1474,6 +1548,16 @@ def render_analysis_results(analysis: dict):
                 unc += 1
 
         total = pos + neg + unc
+        sentiment_conf_vals = []
+        for item in sentiments:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            sentiment_conf_vals.append(max(0.0, min(1.0, _safe_float(item[1], 0.0))))
+        overall_sentiment_conf = (
+            float(sum(sentiment_conf_vals) / len(sentiment_conf_vals))
+            if sentiment_conf_vals
+            else None
+        )
         overall_sentiment_label = "Uncertain"
         if pos >= neg and pos >= unc:
             overall_sentiment_label = "Positive"
@@ -1493,6 +1577,8 @@ def render_analysis_results(analysis: dict):
                 st.caption(
                     f"Positive {pos/total:.1%} · Negative {neg/total:.1%} · Uncertain {unc/total:.1%}"
                 )
+                if overall_sentiment_conf is not None:
+                    st.caption(f"Overall sentiment confidence: {overall_sentiment_conf:.1%}")
                 if alt is not None:
                     pie = (
                         alt.Chart(df_sent)
@@ -1545,20 +1631,6 @@ def render_analysis_results(analysis: dict):
                         sentiment_label=overall_sentiment_label,
                         title_text="Top emotion (model)",
                     )
-                    model_top_name = str(top_items[0][0]).strip().title()
-                    distance_top_name = None
-                    if has_va:
-                        dist_scores_overall = _overall_distance_scores_from_va(per_review_va if has_va else [])
-                        top_dist_overall = _top_n_emotions(dist_scores_overall, n=1) if dist_scores_overall else []
-                        if top_dist_overall:
-                            distance_top_name = str(top_dist_overall[0][0]).strip().title()
-                    if distance_top_name:
-                        if model_top_name.lower() == distance_top_name.lower():
-                            st.caption(f"Model vs distance: match ({model_top_name}).")
-                        else:
-                            st.caption(
-                                f"Model vs distance: differs (model: {model_top_name}, distance: {distance_top_name})."
-                            )
 
                 with st.expander("See how we calculate the emotion", expanded=True):
                     st.markdown(
@@ -1805,12 +1877,15 @@ def render_analysis_results(analysis: dict):
                 with detail_cols[0]:
                     st.markdown("Emotions intensity")
                     _render_graph_subheader("By distance calculation", distance_info_text)
+                    overall_distance_conf = _overall_distance_top_emotion_confidence(
+                        per_review_va if has_va else []
+                    )
+                    if overall_distance_conf is not None:
+                        st.caption(f"Overall emotion confidence (distance top score): {overall_distance_conf:.1%}")
                     overall_dist = _overall_distance_scores_from_va(per_review_va if has_va else [])
                     if overall_dist:
                         top_dist = _top_n_emotions(overall_dist, n=10)
                         df_dist = pd.DataFrame(top_dist, columns=["emotion", "score"])
-                        avg_dist = float(df_dist["score"].mean()) if not df_dist.empty else 0.0
-                        st.caption(f"Average score: {avg_dist:.3f}")
                         if alt is not None:
                             d_chart = (
                                 alt.Chart(df_dist)
@@ -1831,11 +1906,14 @@ def render_analysis_results(analysis: dict):
                 with detail_cols[1]:
                     st.markdown("Emotions intensity")
                     _render_graph_subheader("By model prediction", prediction_info_text)
+                    overall_model_conf = _overall_model_top_emotion_confidence(
+                        per_review_discrete if has_discrete else []
+                    )
+                    if overall_model_conf is not None:
+                        st.caption(f"Overall emotion confidence (model top score): {overall_model_conf:.1%}")
                     top_pred = _top_n_emotions(emo_pct, n=10) if emo_pct else []
                     if top_pred:
                         df_pred = pd.DataFrame(top_pred, columns=["emotion", "score"])
-                        avg_pred = float(df_pred["score"].mean()) if not df_pred.empty else 0.0
-                        st.caption(f"Average score: {avg_pred:.3f}")
                         if alt is not None:
                             p_chart = (
                                 alt.Chart(df_pred)
@@ -1865,6 +1943,7 @@ def render_analysis_results(analysis: dict):
             c_v_available = bool(topic_coherence.get("available"))
             c_v_error = str(topic_coherence.get("error") or "").strip()
             proxy_overall = _safe_float(topic_coherence.get("proxy_overall", 0.0))
+            topic_assign_conf = _overall_topic_assignment_confidence(topic_probs, raw_review_rows)
             topic_cloud_rows = _build_raw_topic_cloud_rows(
                 counts,
                 raw_topic_rows,
@@ -1882,6 +1961,10 @@ def render_analysis_results(analysis: dict):
                     else:
                         st.metric("Coherence c_v", "N/A")
                     st.metric("Coherence proxy", f"{proxy_overall:.3f}")
+                    if topic_assign_conf is not None:
+                        st.metric("Assignment confidence", f"{topic_assign_conf:.1%}")
+                    else:
+                        st.metric("Assignment confidence", "N/A")
                 with pie_section_cols[1]:
                     _render_topic_share_pie(
                         topic_cloud_rows,
@@ -2112,6 +2195,7 @@ def render_analysis_results(analysis: dict):
                     sentiment_color = "#e53935"
                 st.markdown("<div class='analysis-title'>Sentiment analysis</div>", unsafe_allow_html=True)
                 st.write(f"{s_label}: {s_conf:.1%}")
+                st.caption(f"Sentiment confidence: {max(0.0, min(1.0, s_conf)):.1%}")
                 st.markdown(
                     f"<div class='sentiment-rule' style='background:{sentiment_color};'></div>",
                     unsafe_allow_html=True,
@@ -2122,6 +2206,8 @@ def render_analysis_results(analysis: dict):
             if dist or va_point:
                 st.markdown("<div class='analysis-title'>Emotion analysis</div>", unsafe_allow_html=True)
                 rendered_prediction_chart = False
+                model_emotion_conf = None
+                distance_emotion_conf = None
                 if dist:
                     top_emotions = _top_n_emotions(dist, n=10)
                     if top_emotions:
@@ -2131,25 +2217,7 @@ def render_analysis_results(analysis: dict):
                             sentiment_label=s_label,
                             title_text="Top emotion (model)",
                         )
-                        model_top_name = str(top_emotions[0][0]).strip().title()
-                        distance_top_name = None
-                        if va_point:
-                            try:
-                                _rows_note, _ = _build_emotion_distance_rows(
-                                    _safe_float(va_point.get("valence", 0.0)),
-                                    _safe_float(va_point.get("arousal", 0.0)),
-                                )
-                                if _rows_note:
-                                    distance_top_name = str(_rows_note[0].get("emotion") or "").strip().title()
-                            except Exception:
-                                distance_top_name = None
-                        if distance_top_name:
-                            if model_top_name.lower() == distance_top_name.lower():
-                                st.caption(f"Model vs distance: match ({model_top_name}).")
-                            else:
-                                st.caption(
-                                    f"Model vs distance: differs (model: {model_top_name}, distance: {distance_top_name})."
-                                )
+                        model_emotion_conf = max(0.0, min(1.0, _safe_float(top_emotions[0][1], 0.0)))
 
                 with st.expander("See how we calculate the emotion", expanded=True):
                     st.markdown(
@@ -2173,6 +2241,10 @@ def render_analysis_results(analysis: dict):
 
                     rows, missing = _build_emotion_distance_rows(v, a)
                     if rows:
+                        distance_emotion_conf = max(
+                            0.0,
+                            min(1.0, 1.0 / (1.0 + max(0.0, _safe_float(rows[0].get("distance"), 0.0)))),
+                        )
                         df_e = pd.DataFrame(rows)
                         if alt is not None:
                             axis_df = pd.DataFrame([{"x": 0.0, "y": 0.0}])
@@ -2271,6 +2343,10 @@ def render_analysis_results(analysis: dict):
                         with detail_cols[0]:
                             st.markdown("Emotions intensity")
                             _render_graph_subheader("By distance calculation", distance_info_text)
+                            if distance_emotion_conf is not None:
+                                st.caption(
+                                    f"Emotion confidence (distance top score): {distance_emotion_conf:.1%}"
+                                )
                             top10_distance = top10.copy()
                             if not top10_distance.empty:
                                 top10_distance["distance_score"] = 1.0 / (1.0 + top10_distance["distance"].astype(float))
@@ -2300,6 +2376,8 @@ def render_analysis_results(analysis: dict):
                         with detail_cols[1]:
                             st.markdown("Emotions intensity")
                             _render_graph_subheader("By model prediction", prediction_info_text)
+                            if model_emotion_conf is not None:
+                                st.caption(f"Emotion confidence (model top score): {model_emotion_conf:.1%}")
                             if dist:
                                 pred_items = _top_n_emotions(dist, n=10)
                                 pred_df = pd.DataFrame(pred_items, columns=["emotion", "score"])
@@ -2324,6 +2402,8 @@ def render_analysis_results(analysis: dict):
                 if dist and not rendered_prediction_chart:
                     st.markdown("Emotions intensity")
                     _render_graph_subheader("By model prediction", prediction_info_text)
+                    if model_emotion_conf is not None:
+                        st.caption(f"Emotion confidence (model top score): {model_emotion_conf:.1%}")
                     pred_items = _top_n_emotions(dist, n=10)
                     pred_df = pd.DataFrame(pred_items, columns=["emotion", "score"])
                     if alt is not None:
