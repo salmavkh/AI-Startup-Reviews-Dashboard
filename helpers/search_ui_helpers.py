@@ -60,6 +60,17 @@ def _safe_float(value, default: float = 0.0) -> float:
         return float(default)
 
 
+def _rating_to_stars(rating) -> str:
+    """Convert a numeric rating to a 5-star string."""
+    try:
+        r = float(rating)
+    except Exception:
+        return ""
+    r = max(0.0, min(5.0, r))
+    filled = int(round(r))
+    return ("★" * filled) + ("☆" * (5 - filled))
+
+
 def _short_text(text: str, limit: int = 220) -> str:
     s = str(text or "").strip()
     return s if len(s) <= limit else (s[:limit] + "...")
@@ -376,19 +387,32 @@ def render_analysis_results(analysis: dict):
             margin-bottom: 8px;
           }
           .analysis-comment-label {
-            font-size: 13px;
-            font-weight: 600;
-            margin-top: 2px;
-            margin-bottom: 4px;
+            font-size: 14px;
+            font-weight: 700;
+            margin-top: 6px;
+            margin-bottom: 6px;
+            color: #343845;
           }
           .analysis-comment-box {
-            background: #d9d9d9;
-            border-radius: 6px;
+            background: #f2f4f7;
+            border-left: 4px solid #c5ccd6;
+            border-radius: 10px;
             min-height: 44px;
-            padding: 10px 12px;
-            font-size: 13px;
-            color: #1d1d1d;
-            margin-bottom: 10px;
+            padding: 14px 14px 14px 40px;
+            font-size: 15px;
+            line-height: 1.45;
+            color: #252933;
+            margin-bottom: 12px;
+            position: relative;
+          }
+          .analysis-comment-box::before {
+            content: "“";
+            position: absolute;
+            left: 12px;
+            top: 6px;
+            font-size: 26px;
+            line-height: 1;
+            color: #9aa3af;
           }
           .emotion-pill {
             background: #cfcfcf;
@@ -401,15 +425,31 @@ def render_analysis_results(analysis: dict):
           }
           .review-box {
             border: 1px solid #d6d6d6;
-            border-radius: 8px;
-            background: #ffffff;
-            min-height: 88px;
-            padding: 10px 12px;
+            border-radius: 12px;
+            background: #f7f8fa;
+            min-height: 120px;
+            padding: 14px 16px 14px 40px;
+            position: relative;
+            margin-bottom: 14px;
+          }
+          .review-box::before {
+            content: "“";
+            position: absolute;
+            left: 12px;
+            top: 8px;
+            font-size: 26px;
+            line-height: 1;
+            color: #9aa3af;
           }
           .review-count-label {
             color: #8d8d8d;
             font-size: 11px;
             margin-bottom: 6px;
+          }
+          .review-meta {
+            color: #727982;
+            font-size: 12px;
+            margin-top: 10px;
           }
           .sentiment-rule {
             height: 4px;
@@ -1211,50 +1251,45 @@ def render_analysis_results(analysis: dict):
             r = reviews[idx]
             title = str(r.get("title") or f"Review {idx + 1}").strip()
             content = str(r.get("content") or "").strip()
-            review_preview = _short_text(content or title, limit=220)
+            rating = r.get("rating")
+            date = r.get("date") or ""
+            platform = r.get("platform") or ""
+            stars = _rating_to_stars(rating)
+            meta = " · ".join(
+                [p for p in [platform, date, (stars if stars else None)] if p]
+            )
+            safe_body = html.escape(content or "(no review text)").replace("\n", "<br/>")
 
-            nav_cols = st.columns([1, 10, 1], gap="small")
+            st.markdown(
+                "<div class='review-box'>"
+                f"<div class='review-count-label'>Review {idx + 1} of {n}</div>"
+                f"<div style='font-size:14px;font-weight:600;margin-bottom:6px;'>{html.escape(title)}</div>"
+                f"<div style='font-size:14px;line-height:1.45;'>{safe_body}</div>"
+                f"<div class='review-meta'>{html.escape(meta)}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            nav_cols = st.columns([1, 1, 1, 3], gap="small")
             with nav_cols[0]:
-                if st.button("<", key="review_prev", use_container_width=True):
+                if st.button("Prev", key="review_prev", use_container_width=True):
                     st.session_state.search3_review_idx = (idx - 1) % n
                     st.rerun()
             with nav_cols[1]:
-                st.markdown(
-                    "<div class='review-box'>"
-                    f"<div class='review-count-label'>Review {idx + 1} of {n}</div>"
-                    f"<div style='font-size:13px;font-weight:600;margin-bottom:5px;'>{html.escape(title)}</div>"
-                    f"<div style='font-size:13px;'>{html.escape(review_preview)}</div>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-            with nav_cols[2]:
-                if st.button(">", key="review_next", use_container_width=True):
+                if st.button("Next", key="review_next", use_container_width=True):
                     st.session_state.search3_review_idx = (idx + 1) % n
                     st.rerun()
-
-            c1, c2 = st.columns([1, 4])
-            with c1:
-                if st.button("Random review", key="review_rand"):
+            with nav_cols[2]:
+                if st.button("Random review", key="review_rand", use_container_width=True):
                     st.session_state.search3_review_idx = random.randrange(0, n)
                     st.rerun()
-            with c2:
+            with nav_cols[3]:
                 st.caption(f"Showing review {st.session_state.search3_review_idx + 1} of {n}")
 
             idx = st.session_state.search3_review_idx
             r = reviews[idx]
             dist = (per_review_discrete[idx] or {}) if has_discrete else {}
             va_point = (per_review_va[idx] or {}) if has_va else {}
-
-            content = (r.get("content") or "").strip()
-            rating = r.get("rating")
-            date = r.get("date") or ""
-            platform = r.get("platform") or ""
-
-            meta = " · ".join(
-                [p for p in [platform, date, (f"{rating} ★" if rating is not None else None)] if p]
-            )
-            if meta:
-                st.caption(meta)
 
             if idx < len(sentiments):
                 s_label, s_conf = sentiments[idx]

@@ -102,23 +102,36 @@ st.markdown(
       }
 
       .preview-card {
-        border: 1px solid rgba(0, 0, 0, 0.12);
+        border: 1px solid #d6d6d6;
         border-radius: 12px;
-        min-height: 120px;
-        padding: 14px;
-        background: #ffffff;
+        min-height: 130px;
+        padding: 14px 16px 14px 40px;
+        background: #f7f8fa;
         margin-bottom: 14px;
+        position: relative;
+      }
+
+      .preview-card::before {
+        content: "“";
+        position: absolute;
+        left: 12px;
+        top: 8px;
+        font-size: 26px;
+        line-height: 1;
+        color: #9aa3af;
       }
 
       .preview-card-title {
         font-size: 16px;
         font-weight: 600;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
+        color: #2f3340;
       }
 
       .preview-card-content {
         font-size: 15px;
-        color: #232323;
+        line-height: 1.45;
+        color: #2a2f3a;
       }
 
       .divider-line {
@@ -146,13 +159,13 @@ st.markdown(
 
       div[data-testid="stButton"] button[kind="secondary"] {
         background-color: #ffffff;
-        border: 1px solid #ffffff;
+        border: 1px solid #c3c8d0;
         color: #2e3340;
       }
 
       div[data-testid="stButton"] button[kind="secondary"]:hover {
-        background-color: #ffffff;
-        border-color: #ffffff;
+        background-color: #f7f9fc;
+        border-color: #aeb6c2;
       }
     </style>
     """,
