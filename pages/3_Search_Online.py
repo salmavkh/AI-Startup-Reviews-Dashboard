@@ -16,7 +16,7 @@ from helpers.search_ui_helpers import (
     process_search_results,
     render_analysis_results,
 )
-from helpers.search_validation import validate_search_inputs, validate_submit_inputs
+from helpers.search_validation import parse_pasted_link, validate_search_inputs, validate_submit_inputs
 from inference.emotion import emotion_percentages, predict_proba_single
 from inference.keywords import extract_keywords_batch
 from inference.llm_topic_label import llm_label_topics_from_keywords
@@ -153,6 +153,7 @@ defaults = {
     "search3_results": [],
     "search3_selected_result": None,
     "search3_none_selected": False,
+    "search3_pasted_link": "",
     "search3_num_reviews": 20,
     "search3_fetched_reviews": [],
     "search3_confirmed_company": None,
@@ -451,6 +452,7 @@ with search_cols[0]:
         st.session_state.search3_fetched_for = {}
         st.session_state.search3_preview_analysis = None
         st.session_state.search3_review_carousel_start = 0
+        st.session_state.search3_pasted_link = ""
 
         errors = validate_search_inputs(query, platform, num_reviews)
         st.session_state.search3_errors = errors
@@ -460,10 +462,12 @@ with search_cols[0]:
             st.session_state.search3_results = []
             st.session_state.search3_selected_result = None
             st.session_state.search3_none_selected = False
+            st.session_state.search3_pasted_link = ""
         else:
             st.session_state.search3_search_clicked = True
             st.session_state.search3_selected_result = None
             st.session_state.search3_none_selected = False
+            st.session_state.search3_pasted_link = ""
 
             candidates = []
             try:
@@ -509,32 +513,61 @@ with search_cols[1]:
                 unsafe_allow_html=True,
             )
 
+        if none_selected:
+            st.markdown('<div class="field-title">Paste the app/company link</div>', unsafe_allow_html=True)
+            st.text_input(
+                "Paste the app/company link",
+                placeholder="e.g. https://www.trustpilot.com/review/spotify.com",
+                label_visibility="collapsed",
+                key="search3_pasted_link",
+            )
+
         st.write("")
         if st.button("Submit", type="primary", use_container_width=True):
+            picked_result = st.session_state.search3_selected_result is not None
+            pasted_link = st.session_state.get("search3_pasted_link", "") if none_selected else ""
             submit_errors = validate_submit_inputs(
-                st.session_state.search3_selected_result is not None,
-                "",
+                picked_result,
+                pasted_link,
             )
             if submit_errors:
                 for err in submit_errors:
                     st.warning(err)
                 st.session_state.search3_submit_clicked = False
             else:
-                selected_id = st.session_state.search3_selected_result
-                selected = None
-                for rr in st.session_state.search3_results:
-                    if rr.get("id") == selected_id:
-                        selected = rr
-                        break
+                if picked_result:
+                    selected_id = st.session_state.search3_selected_result
+                    selected = None
+                    for rr in st.session_state.search3_results:
+                        if rr.get("id") == selected_id:
+                            selected = rr
+                            break
 
-                if not selected:
-                    st.warning("Selected result not found. Please pick a result and submit again.")
-                    st.session_state.search3_submit_clicked = False
+                    if not selected:
+                        st.warning("Selected result not found. Please pick a result and submit again.")
+                        st.session_state.search3_submit_clicked = False
+                    else:
+                        st.session_state.search3_confirmed_company = {**selected, "source": "selection"}
+                        st.session_state.search3_submit_clicked = True
+                        st.session_state.search3_preview_analysis = None
+                        st.session_state.search3_review_carousel_start = 0
                 else:
-                    st.session_state.search3_confirmed_company = {**selected, "source": "selection"}
-                    st.session_state.search3_submit_clicked = True
-                    st.session_state.search3_preview_analysis = None
-                    st.session_state.search3_review_carousel_start = 0
+                    confirmed, parse_errors = parse_pasted_link(
+                        st.session_state.get("search3_platform"),
+                        st.session_state.get("search3_pasted_link", ""),
+                    )
+                    if parse_errors:
+                        for err in parse_errors:
+                            st.warning(err)
+                        st.session_state.search3_submit_clicked = False
+                    elif not confirmed:
+                        st.warning("Could not confirm company from the pasted link.")
+                        st.session_state.search3_submit_clicked = False
+                    else:
+                        st.session_state.search3_confirmed_company = confirmed
+                        st.session_state.search3_submit_clicked = True
+                        st.session_state.search3_preview_analysis = None
+                        st.session_state.search3_review_carousel_start = 0
 
 for msg in st.session_state.search3_errors:
     st.warning(msg)

@@ -24,7 +24,7 @@ def validate_submit_inputs(picked_result: bool, pasted_link: str) -> list:
     errors = []
     
     if not picked_result and not (pasted_link and pasted_link.strip()):
-        errors.append("Please select one of the results before submitting.")
+        errors.append("Please select one of the results, or paste the app/company link.")
     
     return errors
 
