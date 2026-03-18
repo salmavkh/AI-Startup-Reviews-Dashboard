@@ -1,10 +1,12 @@
 """UI helper functions for search page."""
 
 import html
+import hashlib
 import math
 import os
 import pandas as pd
 import random
+import re
 import streamlit as st
 from fetchers.language_filter import filter_english_reviews
 
@@ -12,6 +14,13 @@ try:
     import altair as alt
 except Exception:  # pragma: no cover - optional dependency
     alt = None
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
+    ImageDraw = None
+    ImageFont = None
 
 TOPIC_DEBUG_MESSAGES_ENABLED = False
 TOPIC_DEBUG_EXAMPLES_PER_THEME = 2
@@ -386,6 +395,97 @@ def render_analysis_results(analysis: dict):
             color: #2f2f2f;
             margin-bottom: 8px;
           }
+          .topic-summary-card {
+            background: #f7f8fa;
+            border: 1px solid #d6dbe3;
+            border-radius: 12px;
+            padding: 14px 16px;
+            margin-top: 10px;
+            margin-bottom: 8px;
+          }
+          .topic-summary-overview {
+            color: #2f3442;
+            line-height: 1.5;
+            margin-bottom: 10px;
+          }
+          .topic-summary-subtitle {
+            font-size: 15px;
+            font-weight: 600;
+            color: #2b3140;
+            margin-bottom: 4px;
+          }
+          .topic-summary-list {
+            margin: 0 0 8px 18px;
+            color: #2f3442;
+          }
+          .topic-summary-list li {
+            margin-bottom: 4px;
+            line-height: 1.45;
+          }
+          .topic-summary-foot {
+            color: #7b818c;
+            font-size: 12px;
+          }
+          .topic-assign-card {
+            background: #f7f8fa;
+            border: 1px solid #d6dbe3;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 14px;
+            min-height: 150px;
+          }
+          .topic-assign-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+          }
+          .topic-chip {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid #c9d1dc;
+            background: #ffffff;
+            color: #2f3442;
+            border-radius: 999px;
+            padding: 7px 13px;
+            font-size: 15px;
+            line-height: 1.25;
+            font-weight: 500;
+          }
+          .topic-chip-primary {
+            border-color: #86a8d9;
+            background: #eaf2ff;
+            color: #21406b;
+            font-weight: 600;
+          }
+          .topic-chip-metric {
+            margin-left: auto;
+            border-color: #b9c2cf;
+            background: #f3f5f8;
+            color: #2a3240;
+          }
+          .topic-keyword-wrap {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+          .topic-keyword-pill {
+            display: inline-flex;
+            align-items: center;
+            background: #edf0f5;
+            border: 1px solid #d5dbe4;
+            color: #3a4150;
+            border-radius: 999px;
+            padding: 5px 11px;
+            font-size: 14px;
+            line-height: 1.2;
+          }
+          .topic-assign-foot {
+            color: #7b818c;
+            font-size: 13px;
+            margin-top: 12px;
+          }
           .analysis-comment-label {
             font-size: 14px;
             font-weight: 700;
@@ -651,9 +751,633 @@ def render_analysis_results(analysis: dict):
                 break
         return rows[:n]
 
+    def _normalize_topic_id(value) -> int | None:
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _topic_label(topic_id: int) -> str:
+        if int(topic_id) == -1:
+            return "Unassigned / Misc"
+        return f"Topic {int(topic_id)}"
+
+    def _build_raw_topic_cloud_rows(
+        counts_map: dict | None,
+        raw_rows: list | None,
+        topic_labels_map: dict | None = None,
+        topic_keywords_map: dict | None = None,
+    ) -> list[dict]:
+        topic_counts = {}
+        if isinstance(counts_map, dict):
+            for key, value in counts_map.items():
+                tid = _normalize_topic_id(key)
+                if tid is None:
+                    continue
+                try:
+                    cnt = int(value)
+                except Exception:
+                    cnt = 0
+                if cnt > 0:
+                    topic_counts[tid] = cnt
+
+        row_by_topic = {}
+        if isinstance(raw_rows, list):
+            for row in raw_rows:
+                if not isinstance(row, dict):
+                    continue
+                tid = _normalize_topic_id(row.get("topic_id"))
+                if tid is None:
+                    continue
+                row_by_topic[tid] = row
+                if tid not in topic_counts:
+                    try:
+                        cnt = int(row.get("count") or 0)
+                    except Exception:
+                        cnt = 0
+                    if cnt > 0:
+                        topic_counts[tid] = cnt
+
+        total = max(1, sum(topic_counts.values()))
+        rows = []
+        for tid, cnt in sorted(topic_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+            share = None
+            src = row_by_topic.get(tid) or {}
+            try:
+                share = float(src.get("share"))
+            except Exception:
+                share = None
+            if share is None:
+                share = float(cnt) / float(total)
+            topic_name = ""
+            if isinstance(topic_labels_map, dict):
+                topic_name = str(
+                    topic_labels_map.get(tid)
+                    or topic_labels_map.get(str(tid))
+                    or ""
+                ).strip()
+            if not topic_name:
+                topic_name = _topic_label(tid)
+
+            top_words = str(src.get("words") or "").strip()
+            if not top_words and isinstance(topic_keywords_map, dict):
+                kws = topic_keywords_map.get(tid) or topic_keywords_map.get(str(tid)) or []
+                if isinstance(kws, list):
+                    top_words = ", ".join(str(k).strip() for k in kws[:10] if str(k).strip())
+
+            if top_words:
+                word_parts = [p.strip() for p in top_words.split(",") if p.strip()]
+                words_short = ", ".join(word_parts[:6])
+                legend_label = f"{topic_name}: {words_short}"
+            else:
+                legend_label = topic_name
+
+            rows.append(
+                {
+                    "topic_id": tid,
+                    "label": _topic_label(tid),
+                    "topic_name": topic_name,
+                    "count": int(cnt),
+                    "share": max(0.0, min(1.0, float(share))),
+                    "top_words": top_words,
+                    "legend_label": legend_label,
+                }
+            )
+        return rows
+
+    def _render_topic_share_pie(topic_rows: list[dict], key_prefix: str):
+        if not topic_rows:
+            st.caption("No topics to visualize.")
+            return
+
+        chart_rows = []
+        for row in topic_rows:
+            cnt = int(row.get("count") or 0)
+            if cnt <= 0:
+                continue
+            chart_rows.append(
+                {
+                    "topic_id": int(row.get("topic_id")),
+                    "topic_name": str(row.get("topic_name") or row.get("label") or ""),
+                    "top_words": str(row.get("top_words") or ""),
+                    "legend_label": str(row.get("legend_label") or row.get("label") or ""),
+                    "count": cnt,
+                    "share_pct": _safe_float(row.get("share")) * 100.0,
+                }
+            )
+
+        if not chart_rows:
+            st.caption("No topics to visualize.")
+            return
+
+        df_pie = pd.DataFrame(chart_rows).sort_values(["count", "topic_id"], ascending=[False, True])
+
+        if alt is not None:
+            legend_domain = df_pie["legend_label"].tolist()
+            legend_colors = [
+                "#4E79A7",
+                "#F28E2B",
+                "#E15759",
+                "#76B7B2",
+                "#59A14F",
+                "#EDC948",
+                "#B07AA1",
+                "#FF9DA7",
+                "#9C755F",
+                "#BAB0AC",
+            ]
+            color_range = [legend_colors[i % len(legend_colors)] for i in range(len(legend_domain))]
+            color_map = {legend_domain[i]: color_range[i] for i in range(len(legend_domain))}
+
+            pie_cols = st.columns([1.25, 1.0], gap="large")
+            with pie_cols[0]:
+                pie = (
+                    alt.Chart(df_pie)
+                    .mark_arc(outerRadius=120)
+                    .encode(
+                        theta=alt.Theta("count:Q", title="Share"),
+                        color=alt.Color(
+                            "legend_label:N",
+                            legend=None,
+                            scale=alt.Scale(domain=legend_domain, range=color_range),
+                        ),
+                        tooltip=[
+                            "topic_name:N",
+                            "top_words:N",
+                            alt.Tooltip("count:Q", title="Reviews"),
+                            alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f"),
+                        ],
+                    )
+                    .properties(height=320)
+                )
+                st.altair_chart(pie, use_container_width=True, key=f"{key_prefix}_topic_share_pie")
+
+            with pie_cols[1]:
+                st.markdown("**Topic name + top words**")
+                for _, row in df_pie.iterrows():
+                    label = str(row.get("legend_label") or "")
+                    dot_color = color_map.get(label, "#4E79A7")
+                    st.markdown(
+                        "<div style='display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;'>"
+                        f"<span style='display:inline-block;width:10px;height:10px;border-radius:50%;"
+                        f"margin-top:6px;background:{dot_color};flex:0 0 10px;'></span>"
+                        f"<span style='font-size:14px;line-height:1.35;color:#2f3340;'>{html.escape(label)}</span>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+        else:
+            fallback_rows = []
+            for row in chart_rows:
+                fallback_rows.append(
+                    {
+                        "topic": row["topic_name"],
+                        "top_words": row["top_words"],
+                        "reviews": row["count"],
+                        "share": f"{row['share_pct']:.1f}%",
+                    }
+                )
+            st.dataframe(pd.DataFrame(fallback_rows), hide_index=True, use_container_width=True)
+
+    def _build_topic_word_weights(raw_rows: list | None) -> dict[str, float]:
+        weights: dict[str, float] = {}
+        if not isinstance(raw_rows, list):
+            return weights
+
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                topic_count = max(1, int(row.get("count") or 0))
+            except Exception:
+                topic_count = 1
+            words = str(row.get("words") or "").strip()
+            if not words:
+                continue
+            parts = [p.strip().lower() for p in words.split(",") if p and p.strip()]
+            for rank, token in enumerate(parts[:20]):
+                cleaned = re.sub(r"[^a-z0-9\+\-\s]", " ", token)
+                cleaned = re.sub(r"\s+", " ", cleaned).strip()
+                if len(cleaned) < 2:
+                    continue
+                rank_weight = 1.0 / (1.0 + 0.35 * float(rank))
+                weights[cleaned] = weights.get(cleaned, 0.0) + (float(topic_count) * rank_weight)
+        return weights
+
+    def _rects_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int], pad: int = 4) -> bool:
+        ax0, ay0, ax1, ay1 = a
+        bx0, by0, bx1, by1 = b
+        return not (
+            (ax1 + pad) < bx0
+            or (bx1 + pad) < ax0
+            or (ay1 + pad) < by0
+            or (by1 + pad) < ay0
+        )
+
+    def _render_weighted_wordcloud(
+        weights: dict[str, float],
+        key_prefix: str,
+        width: int = 1200,
+        height: int = 560,
+        max_words: int = 120,
+    ):
+        clean_weights = {
+            str(k).strip(): float(v)
+            for k, v in (weights or {}).items()
+            if str(k).strip() and _safe_float(v, 0.0) > 0
+        }
+        if not clean_weights:
+            st.caption("No words available for word cloud.")
+            return
+        if Image is None or ImageDraw is None or ImageFont is None:
+            st.caption("Word cloud rendering unavailable in this runtime.")
+            return
+
+        items = sorted(clean_weights.items(), key=lambda kv: -kv[1])[: max(10, int(max_words or 120))]
+        if not items:
+            st.caption("No words available for word cloud.")
+            return
+
+        canvas = Image.new("RGB", (width, height), "#f6f8fb")
+        draw = ImageDraw.Draw(canvas)
+
+        vals = [float(v) for _, v in items]
+        min_v, max_v = min(vals), max(vals)
+
+        def _font_size(value: float) -> int:
+            if max_v <= min_v:
+                return 42
+            ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
+            return int(18 + ratio * 150)
+
+        font_candidates = [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        ]
+        font_cache: dict[int, object] = {}
+
+        def _get_font(size: int):
+            key = max(10, int(size))
+            if key in font_cache:
+                return font_cache[key]
+            for path in font_candidates:
+                try:
+                    f = ImageFont.truetype(path, key)
+                    font_cache[key] = f
+                    return f
+                except Exception:
+                    continue
+            f = ImageFont.load_default()
+            font_cache[key] = f
+            return f
+
+        seed_src = "|".join(f"{w}:{v:.4f}" for w, v in items[:60])
+        seed = int(hashlib.sha1(seed_src.encode("utf-8")).hexdigest()[:8], 16)
+        rng = random.Random(seed)
+        palette = ["#1f77b4", "#1a9a8c", "#38a169", "#c5c90b", "#3f5aa9", "#1f6f8b", "#2f855a"]
+
+        placed: list[tuple[int, int, int, int]] = []
+        cx, cy = width // 2, height // 2
+        max_radius = int(min(width, height) * 0.47)
+
+        for idx_item, (word, weight) in enumerate(items):
+            base_size = _font_size(float(weight))
+            rendered = False
+            for scale in (1.0, 0.88, 0.76, 0.66):
+                font = _get_font(int(base_size * scale))
+                try:
+                    bbox0 = draw.textbbox((0, 0), word, font=font)
+                except Exception:
+                    continue
+                tw = int(bbox0[2] - bbox0[0])
+                th = int(bbox0[3] - bbox0[1])
+                if tw <= 0 or th <= 0:
+                    continue
+
+                for attempt in range(450):
+                    spiral = (attempt / 450.0) ** 1.35
+                    radius = int(spiral * max_radius)
+                    angle = rng.random() * 2.0 * math.pi + (idx_item * 0.17)
+                    x = cx + int(radius * math.cos(angle)) - (tw // 2)
+                    y = cy + int(radius * math.sin(angle)) - (th // 2)
+                    rect = (x, y, x + tw, y + th)
+
+                    if rect[0] < 8 or rect[1] < 8 or rect[2] > (width - 8) or rect[3] > (height - 8):
+                        continue
+                    if any(_rects_overlap(rect, other, pad=5) for other in placed):
+                        continue
+
+                    color = palette[(idx_item + attempt) % len(palette)]
+                    draw.text((x, y), word, font=font, fill=color)
+                    placed.append(rect)
+                    rendered = True
+                    break
+                if rendered:
+                    break
+
+        st.image(canvas, use_container_width=True)
+
+    def _render_topic_wordcloud_from_top_words(raw_rows: list | None, key_prefix: str):
+        weights = _build_topic_word_weights(raw_rows)
+        if not weights:
+            st.caption("No topic top-words available for word cloud.")
+            return
+        _render_weighted_wordcloud(
+            weights,
+            key_prefix=key_prefix,
+            width=1200,
+            height=560,
+            max_words=120,
+        )
+
+    def _build_one_review_per_topic(
+        reviews_list: list,
+        topics_list: list,
+        counts_map: dict | None,
+        topic_labels_map: dict | None,
+        topic_keywords_map: dict | None,
+    ) -> list[dict]:
+        if not isinstance(reviews_list, list) or not isinstance(topics_list, list):
+            return []
+        if len(reviews_list) != len(topics_list):
+            return []
+
+        # Rank topics by frequency (outlier topic -1 shown last).
+        topic_counts: dict[int, int] = {}
+        if isinstance(counts_map, dict):
+            for k, v in counts_map.items():
+                tid = _normalize_topic_id(k)
+                if tid is None:
+                    continue
+                try:
+                    topic_counts[tid] = max(0, int(v))
+                except Exception:
+                    topic_counts[tid] = 0
+        if not topic_counts:
+            for t in topics_list:
+                tid = _normalize_topic_id(t)
+                if tid is None:
+                    continue
+                topic_counts[tid] = topic_counts.get(tid, 0) + 1
+
+        best_by_topic: dict[int, dict] = {}
+        for idx_row, topic_value in enumerate(topics_list):
+            tid = _normalize_topic_id(topic_value)
+            if tid is None or idx_row >= len(reviews_list):
+                continue
+            rv = reviews_list[idx_row] or {}
+            title = str(rv.get("title") or "").strip()
+            content = str(rv.get("content") or "").strip()
+            text = content or title
+            if not text:
+                continue
+
+            words = []
+            if isinstance(topic_keywords_map, dict):
+                raw_words = topic_keywords_map.get(tid) or topic_keywords_map.get(str(tid)) or []
+                if isinstance(raw_words, list):
+                    words = [str(w).strip().lower() for w in raw_words[:10] if str(w).strip()]
+            overlap = sum(1 for w in words if w and w in text.lower())
+            score = float(overlap) * 3.0 + min(1.0, len(text) / 220.0)
+
+            stars = _rating_to_stars(rv.get("rating"))
+            meta = " · ".join(
+                [p for p in [str(rv.get("platform") or "").strip(), str(rv.get("date") or "").strip(), (stars if stars else None)] if p]
+            )
+            topic_name = ""
+            if isinstance(topic_labels_map, dict):
+                topic_name = str(
+                    topic_labels_map.get(tid)
+                    or topic_labels_map.get(str(tid))
+                    or ""
+                ).strip()
+            if not topic_name:
+                topic_name = _topic_label(tid)
+
+            candidate = {
+                "topic_id": tid,
+                "topic_name": topic_name,
+                "review_idx": idx_row,
+                "title": title or f"Review {idx_row + 1}",
+                "content": _short_text(content or title or "(no review text)", limit=260),
+                "meta": meta,
+                "score": score,
+                "top_words": ", ".join(words[:6]) if words else "",
+            }
+            prev = best_by_topic.get(tid)
+            if prev is None or candidate["score"] > prev["score"]:
+                best_by_topic[tid] = candidate
+
+        ordered_topic_ids = sorted(
+            list(topic_counts.keys()),
+            key=lambda tid: (1 if int(tid) == -1 else 0, -int(topic_counts.get(tid, 0)), int(tid)),
+        )
+        return [best_by_topic[tid] for tid in ordered_topic_ids if tid in best_by_topic]
+
+    def _render_raw_topic_cloud(
+        topic_rows: list[dict],
+        key_prefix: str,
+        active_topic_id: int | None = None,
+    ):
+        if not topic_rows:
+            st.caption("No topics to visualize.")
+            return
+
+        sorted_rows = sorted(topic_rows, key=lambda r: (-int(r.get("count", 0)), int(r.get("topic_id", 0))))
+        chart_rows = []
+        labels = []
+        for idx_row, row in enumerate(sorted_rows, start=1):
+            tid = _normalize_topic_id(row.get("topic_id"))
+            if tid is None:
+                continue
+            label = str(row.get("label") or _topic_label(tid))
+            labels.append(label)
+            chart_rows.append(
+                {
+                    "topic_id": tid,
+                    "label": label,
+                    "count": int(row.get("count") or 0),
+                    "share_pct": _safe_float(row.get("share")) * 100.0,
+                    "is_active": bool(active_topic_id is not None and int(active_topic_id) == tid),
+                    "status": "active" if (active_topic_id is not None and int(active_topic_id) == tid) else "other",
+                    "row_order": idx_row,
+                }
+            )
+
+        if not chart_rows:
+            st.caption("No topics to visualize.")
+            return
+
+        df_cloud = pd.DataFrame(chart_rows)
+        if alt is not None:
+            base = alt.Chart(df_cloud).encode(
+                x=alt.X(
+                    "label:N",
+                    sort=labels,
+                    axis=alt.Axis(title=None, labelAngle=0, labelLimit=220),
+                ),
+                y=alt.value(95),
+                tooltip=[
+                    "label:N",
+                    alt.Tooltip("count:Q", title="Reviews"),
+                    alt.Tooltip("share_pct:Q", title="Share (%)", format=".1f"),
+                ],
+            )
+            bubbles = base.mark_circle().encode(
+                size=alt.Size(
+                    "count:Q",
+                    scale=alt.Scale(range=[1000, 9000]),
+                    legend=None,
+                ),
+                color=alt.Color(
+                    "status:N",
+                    scale=alt.Scale(domain=["other", "active"], range=["#8fb7ff", "#1f77ff"]),
+                    legend=None,
+                ),
+                stroke=alt.condition(
+                    "datum.is_active",
+                    alt.value("#1b1f2a"),
+                    alt.value("#6e7b8f"),
+                ),
+                strokeWidth=alt.condition(
+                    "datum.is_active",
+                    alt.value(2.0),
+                    alt.value(1.0),
+                ),
+                opacity=alt.value(0.95),
+            )
+            labels_layer = base.mark_text(
+                baseline="middle",
+                align="center",
+                dy=0,
+                fontSize=11,
+                color="#1f2430",
+                fontWeight=600,
+            ).encode(text="label:N")
+            st.altair_chart(
+                (bubbles + labels_layer).properties(height=240).configure_view(strokeOpacity=0),
+                use_container_width=True,
+                key=f"{key_prefix}_raw_topic_cloud",
+            )
+        else:
+            cols_per_row = 4
+            for row_start in range(0, len(chart_rows), cols_per_row):
+                row_items = chart_rows[row_start:row_start + cols_per_row]
+                cols = st.columns(cols_per_row, gap="small")
+                for cidx in range(cols_per_row):
+                    with cols[cidx]:
+                        if cidx >= len(row_items):
+                            st.write("")
+                            continue
+                        item = row_items[cidx]
+                        cnt = int(item.get("count") or 0)
+                        dia = int(max(72, min(132, 72 + cnt * 6)))
+                        bg = "#1f77ff" if item.get("is_active") else "#dfeaff"
+                        fg = "#ffffff" if item.get("is_active") else "#243142"
+                        border = "#1b1f2a" if item.get("is_active") else "#8ea1ba"
+                        st.markdown(
+                            "<div style='display:flex;justify-content:center;'>"
+                            f"<div style='width:{dia}px;height:{dia}px;border-radius:50%;"
+                            f"background:{bg};border:1px solid {border};display:flex;align-items:center;"
+                            "justify-content:center;text-align:center;padding:8px;'>"
+                            f"<div style='font-size:12px;font-weight:600;color:{fg};line-height:1.25;'>"
+                            f"{html.escape(str(item.get('label') or 'Topic'))}<br/>"
+                            f"({cnt})"
+                            "</div></div></div>",
+                            unsafe_allow_html=True,
+                        )
+
     def _emotion_bar_height(num_items: int) -> int:
         # Keep enough vertical room so all top-10 labels are visible.
         return max(360, int(num_items) * 38 + 40)
+
+    def _parse_topic_llm_summary(summary_text: str) -> tuple[str, list[str]]:
+        text = str(summary_text or "").strip()
+        if not text:
+            return "", []
+
+        lines = [re.sub(r"\s+", " ", ln).strip() for ln in text.splitlines() if str(ln).strip()]
+        overview = ""
+        bullets: list[str] = []
+
+        for ln in lines:
+            low = ln.lower()
+            if low in {"llm summary", "summary"}:
+                continue
+            if low.startswith("overview:"):
+                candidate = ln.split(":", 1)[1].strip()
+                if candidate and not overview:
+                    overview = candidate
+                continue
+            if low.startswith("topics:") or low.startswith("top themes:"):
+                continue
+
+            numbered = re.match(r"^\d+[\.\)]\s*(.+)$", ln)
+            dashed = re.match(r"^[-*]\s+(.+)$", ln)
+            if numbered:
+                item = numbered.group(1).strip()
+                if item:
+                    bullets.append(item)
+                continue
+            if dashed:
+                item = dashed.group(1).strip()
+                if item:
+                    bullets.append(item)
+                continue
+
+            if not overview:
+                overview = ln
+            elif not bullets and len(ln.split()) >= 5:
+                bullets.append(ln)
+
+        if not bullets:
+            for m in re.finditer(r"(?:^|\n)\s*\d+[\.\)]\s*(.+)", text):
+                item = re.sub(r"\s+", " ", str(m.group(1) or "")).strip()
+                if item:
+                    bullets.append(item)
+
+        cleaned_bullets = []
+        seen = set()
+        for item in bullets:
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned_bullets.append(item)
+            if len(cleaned_bullets) >= 5:
+                break
+
+        if not overview and lines:
+            for ln in lines:
+                low = ln.lower()
+                if low.startswith("topics:"):
+                    continue
+                overview = ln
+                break
+
+        return overview, cleaned_bullets
+
+    def _render_topic_summary_card(summary_text: str):
+        overview, bullets = _parse_topic_llm_summary(summary_text)
+        fallback = _short_text(str(summary_text or "").strip(), limit=650)
+        if not overview:
+            overview = fallback or "Summary unavailable for this sample."
+
+        bullets_html = "".join(
+            f"<li>{html.escape(str(item))}</li>" for item in bullets if str(item).strip()
+        )
+        card_html = (
+            "<div class='topic-summary-card'>"
+            f"<div class='topic-summary-overview'><strong>Overview:</strong> {html.escape(overview)}</div>"
+        )
+        if bullets_html:
+            card_html += (
+                "<div class='topic-summary-subtitle'>Top themes</div>"
+                f"<ul class='topic-summary-list'>{bullets_html}</ul>"
+            )
+        card_html += "<div class='topic-summary-foot'>Generated from current fetched sample.</div></div>"
+        st.markdown(card_html, unsafe_allow_html=True)
 
     distance_info_text = (
         "Distance calculation: this ranks emotions by directly measuring how close the review's "
@@ -1046,10 +1770,116 @@ def render_analysis_results(analysis: dict):
         keywords = topic_keywords_by_topic or {}
         topic_summary = (analysis.get("topic_summary") or "").strip()
         if counts or topic_summary:
-            st.markdown("**Topic (overall)**")
-            if topic_summary:
-                st.markdown("**LLM Summary**")
-                st.write(topic_summary)
+            st.markdown("<div class='analysis-title'>Topic Modelling</div>", unsafe_allow_html=True)
+            c_v_overall = topic_coherence.get("c_v_overall")
+            c_v_available = bool(topic_coherence.get("available"))
+            c_v_error = str(topic_coherence.get("error") or "").strip()
+            proxy_overall = _safe_float(topic_coherence.get("proxy_overall", 0.0))
+            topic_cloud_rows = _build_raw_topic_cloud_rows(
+                counts,
+                raw_topic_rows,
+                topic_labels_map=topic_labels_by_topic,
+                topic_keywords_map=topic_keywords_by_topic,
+            )
+            if topic_cloud_rows:
+                st.markdown("**Topic share**")
+                st.caption("Pie chart of raw topic share. Legend shows topic name and top words.")
+                pie_section_cols = st.columns([0.45, 1.55], gap="large")
+                with pie_section_cols[0]:
+                    st.metric("Topics found", f"{len([t for t in counts.keys() if int(t) != -1])}")
+                    if c_v_overall is not None:
+                        st.metric("Coherence c_v", f"{_safe_float(c_v_overall):.3f}")
+                    else:
+                        st.metric("Coherence c_v", "N/A")
+                    st.metric("Coherence proxy", f"{proxy_overall:.3f}")
+                with pie_section_cols[1]:
+                    _render_topic_share_pie(
+                        topic_cloud_rows,
+                        key_prefix="overall",
+                    )
+                st.markdown("**Topic word cloud (from all top words)**")
+                st.caption("Built from raw topic top words weighted by topic size and term rank.")
+                _render_topic_wordcloud_from_top_words(
+                    raw_topic_rows,
+                    key_prefix="overall",
+                )
+                topic_examples = _build_one_review_per_topic(
+                    reviews_list=reviews,
+                    topics_list=topics_per_review,
+                    counts_map=counts,
+                    topic_labels_map=topic_labels_by_topic,
+                    topic_keywords_map=topic_keywords_by_topic,
+                )
+                if topic_examples:
+                    st.markdown("**Reviews sample**")
+                    st.caption("Representative example from each discovered topic.")
+                    topic_page_key = "search3_topic_examples_page"
+                    per_page = 4
+                    total_examples = len(topic_examples)
+                    total_pages = max(1, int(math.ceil(total_examples / float(per_page))))
+                    if topic_page_key not in st.session_state:
+                        st.session_state[topic_page_key] = 0
+                    st.session_state[topic_page_key] = max(
+                        0,
+                        min(int(st.session_state[topic_page_key]), total_pages - 1),
+                    )
+
+                    page_idx = int(st.session_state[topic_page_key])
+                    start = page_idx * per_page
+                    end = min(total_examples, start + per_page)
+                    page_examples = topic_examples[start:end]
+
+                    for row_start in range(0, len(page_examples), 2):
+                        row_items = page_examples[row_start:row_start + 2]
+                        cols = st.columns(2, gap="large")
+                        for cidx in range(2):
+                            with cols[cidx]:
+                                if cidx >= len(row_items):
+                                    st.write("")
+                                    continue
+                                ex = row_items[cidx]
+                                topic_head = f"{ex.get('topic_name')} ({int(ex.get('topic_id', -1))})"
+                                st.markdown(f"**{html.escape(topic_head)}**")
+                                if ex.get("top_words"):
+                                    st.caption(f"Top words: {ex.get('top_words')}")
+                                title_html = html.escape(str(ex.get("title") or "")).strip()
+                                content_html = html.escape(str(ex.get("content") or "(no review text)")).strip()
+                                meta_html = html.escape(str(ex.get("meta") or "")).strip()
+                                st.markdown(
+                                    "<div class='analysis-comment-box'>"
+                                    f"<div style='font-size:14px;font-weight:600;margin-bottom:6px;'>{title_html}</div>"
+                                    f"<div style='font-size:15px;line-height:1.45;'>{content_html}</div>"
+                                    + (
+                                        f"<div class='review-meta' style='margin-top:8px;'>{meta_html}</div>"
+                                        if meta_html
+                                        else ""
+                                    )
+                                    + "</div>",
+                                    unsafe_allow_html=True,
+                                )
+
+                    if total_examples > per_page:
+                        nav_cols = st.columns([1, 1, 3], gap="small")
+                        with nav_cols[0]:
+                            if st.button("Prev", key="overall_topic_examples_prev", use_container_width=True):
+                                st.session_state[topic_page_key] = (page_idx - 1) % total_pages
+                                st.rerun()
+                        with nav_cols[1]:
+                            if st.button("Next", key="overall_topic_examples_next", use_container_width=True):
+                                st.session_state[topic_page_key] = (page_idx + 1) % total_pages
+                                st.rerun()
+                        with nav_cols[2]:
+                            status_text = (
+                                f"Showing topics {start + 1}-{end} of {total_examples} "
+                                f"(page {page_idx + 1} of {total_pages})"
+                            )
+                            st.markdown(
+                                f"<div style='text-align:right;color:#7b818c;font-size:0.9rem;"
+                                f"padding-top:6px;'>{html.escape(status_text)}</div>",
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.caption(f"Showing topics {start + 1}-{end} of {total_examples}")
 
             if TOPIC_DEBUG_MESSAGES_ENABLED:
                 topic_examples = {}
@@ -1112,127 +1942,10 @@ def render_analysis_results(analysis: dict):
                         else:
                             st.caption("No strong keyword-matching examples in this sample.")
 
-            st.markdown("**Raw topic outputs (overall)**")
-            c_v_overall = topic_coherence.get("c_v_overall")
-            c_v_available = bool(topic_coherence.get("available"))
-            c_v_error = str(topic_coherence.get("error") or "").strip()
-            proxy_overall = _safe_float(topic_coherence.get("proxy_overall", 0.0))
-            mc = st.columns(3)
-            mc[0].metric("Topics found", f"{len([t for t in counts.keys() if int(t) != -1])}")
-            if c_v_overall is not None:
-                mc[1].metric("Coherence c_v", f"{_safe_float(c_v_overall):.3f}")
-            else:
-                mc[1].metric("Coherence c_v", "N/A")
-            mc[2].metric("Coherence proxy", f"{proxy_overall:.3f}")
-
-            if (not c_v_available) and c_v_error:
-                st.caption(f"c_v coherence unavailable in runtime: {c_v_error}")
-
-            if raw_topic_rows:
-                df_raw_topics = pd.DataFrame(raw_topic_rows)
-                # Primary overall topic table (clean UI): topic_id, size, top_words, coherence_c_v
-                primary_rows = []
-                for row in raw_topic_rows:
-                    topic_id = row.get("topic_id")
-                    size = int(row.get("count") or 0)
-                    top_words = str(row.get("words") or "").strip()
-                    topic_name = ""
-                    if topic_id is not None:
-                        topic_name = str(
-                            topic_labels_by_topic.get(int(topic_id))
-                            or topic_labels_by_topic.get(str(topic_id))
-                            or ""
-                        ).strip()
-                    if not topic_name and int(topic_id or -1) == -1:
-                        topic_name = "Unassigned / Misc"
-                    coherence_c_v = row.get("coherence_c_v")
-                    if coherence_c_v is not None:
-                        try:
-                            coherence_c_v = round(float(coherence_c_v), 3)
-                        except Exception:
-                            pass
-                    primary_rows.append(
-                        {
-                            "topic_id": topic_id,
-                            "size": size,
-                            "topic_name": topic_name,
-                            "top_words": top_words,
-                            "coherence_c_v": coherence_c_v,
-                        }
-                    )
-                st.dataframe(pd.DataFrame(primary_rows), hide_index=True, use_container_width=True)
-            else:
-                st.caption("No topic rows to display.")
-
-            with st.expander("Topic diagnostics (confidence/proxy/details)", expanded=False):
-                if raw_topic_rows:
-                    df_debug_topics = pd.DataFrame(raw_topic_rows)
-                    if "share" in df_debug_topics.columns:
-                        try:
-                            df_debug_topics["share"] = df_debug_topics["share"].astype(float).map(lambda x: f"{x:.1%}")
-                        except Exception:
-                            pass
-                    st.dataframe(df_debug_topics, hide_index=True, use_container_width=True)
-                else:
-                    st.caption("No topic diagnostics to display.")
-
-            with st.expander("Raw per-review topic assignments (overall set)", expanded=False):
-                if raw_review_rows:
-                    df_raw_reviews = pd.DataFrame(raw_review_rows)
-                    if "topic_id" in df_raw_reviews.columns:
-                        def _name_for_topic(value):
-                            try:
-                                tid = int(value)
-                            except Exception:
-                                return ""
-                            if tid == -1:
-                                return "Unassigned / Misc"
-                            return str(
-                                topic_labels_by_topic.get(tid)
-                                or topic_labels_by_topic.get(str(tid))
-                                or ""
-                            ).strip()
-                        df_raw_reviews["topic_name"] = df_raw_reviews["topic_id"].map(_name_for_topic)
-                    if "confidence" in df_raw_reviews.columns:
-                        try:
-                            df_raw_reviews["confidence"] = df_raw_reviews["confidence"].map(
-                                lambda x: (f"{float(x):.3f}" if x is not None else "")
-                            )
-                        except Exception:
-                            pass
-                    st.dataframe(df_raw_reviews, hide_index=True, use_container_width=True)
-                else:
-                    st.caption("No per-review topic assignment rows to display.")
-
-        if overall_keywords:
-            st.markdown("**Keywords (overall)**")
-            keyword_rows = []
-            for item in overall_keywords:
-                if isinstance(item, dict):
-                    term = str(item.get("keyword") or "").strip()
-                    review_count = int(item.get("review_count") or 0)
-                    mentions = int(item.get("mentions") or 0)
-                    avg_score = float(item.get("avg_score") or 0.0)
-                else:
-                    term = str(item).strip()
-                    review_count = 0
-                    mentions = 0
-                    avg_score = 0.0
-
-                if not term:
-                    continue
-                keyword_rows.append(
-                    {
-                        "keyword": term,
-                        "reviews": review_count,
-                        "mentions": mentions,
-                        "avg_score": avg_score,
-                    }
-                )
-
-            if keyword_rows:
-                st.write("Top terms:", ", ".join(r["keyword"] for r in keyword_rows[:10]))
-                st.dataframe(pd.DataFrame(keyword_rows), hide_index=True, use_container_width=True)
+            if topic_summary:
+                st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+                st.markdown("**LLM Summary**")
+                _render_topic_summary_card(topic_summary)
 
     # --------------------
     # Per-review tab
@@ -1284,7 +1997,12 @@ def render_analysis_results(analysis: dict):
                     st.session_state.search3_review_idx = random.randrange(0, n)
                     st.rerun()
             with nav_cols[3]:
-                st.caption(f"Showing review {st.session_state.search3_review_idx + 1} of {n}")
+                review_status = f"Showing review {st.session_state.search3_review_idx + 1} of {n}"
+                st.markdown(
+                    f"<div style='text-align:right;color:#7b818c;font-size:0.9rem;padding-top:6px;'>"
+                    f"{html.escape(review_status)}</div>",
+                    unsafe_allow_html=True,
+                )
 
             idx = st.session_state.search3_review_idx
             r = reviews[idx]
@@ -1517,22 +2235,18 @@ def render_analysis_results(analysis: dict):
                 topic_id = None
 
             if topic_id is not None:
-                st.markdown("**Topic (this review)**")
-                if topic_id == -1:
-                    st.write("Topic: Unassigned / Misc (outlier)")
-                    topic_words = []
-                else:
-                    st.write(f"Topic ID: {topic_id}")
-                    topic_name = str(
-                        topic_labels_by_topic.get(topic_id)
-                        or topic_labels_by_topic.get(str(topic_id))
-                        or ""
-                    ).strip()
-                    if topic_name:
-                        st.write(f"Topic name: {topic_name}")
-                    topic_words = topic_keywords_by_topic.get(topic_id, []) if isinstance(topic_keywords_by_topic, dict) else []
-                    if topic_words:
-                        st.write("Topic words: " + ", ".join(topic_words[:10]))
+                st.markdown("<div class='analysis-title'>Topic Modelling</div>", unsafe_allow_html=True)
+                blocked_terms = {
+                    "idk",
+                    "tab",
+                    "useful",
+                    "features",
+                    "pay",
+                    "sucks",
+                    "list",
+                    "force",
+                    "date",
+                }
 
                 topic_confidence = None
                 try:
@@ -1552,14 +2266,70 @@ def render_analysis_results(analysis: dict):
                 except Exception:
                     topic_confidence = None
 
+                if topic_id == -1:
+                    topic_tag = "Unassigned / Misc"
+                    topic_name = "Outlier review"
+                    topic_words = []
+                else:
+                    topic_tag = f"Topic {topic_id}"
+                    topic_name = str(
+                        topic_labels_by_topic.get(topic_id)
+                        or topic_labels_by_topic.get(str(topic_id))
+                        or ""
+                    ).strip() or f"Topic {topic_id}"
+                    raw_topic_words = (
+                        topic_keywords_by_topic.get(topic_id, [])
+                        if isinstance(topic_keywords_by_topic, dict)
+                        else []
+                    )
+                    topic_words = [
+                        w for w in raw_topic_words
+                        if str(w).strip().lower() not in blocked_terms
+                    ]
+
                 if topic_confidence is not None:
-                    st.write(f"Topic confidence: {max(0.0, min(1.0, float(topic_confidence))):.3f}")
+                    conf_text = f"Confidence {max(0.0, min(1.0, float(topic_confidence))):.3f}"
+                else:
+                    conf_text = "Confidence N/A"
+
+                topic_word_pills = "".join(
+                    f"<span class='topic-keyword-pill'>{html.escape(str(w))}</span>"
+                    for w in topic_words[:10]
+                    if str(w).strip()
+                )
+                if not topic_word_pills:
+                    topic_word_pills = "<span class='topic-keyword-pill'>No topic words</span>"
+
+                st.markdown("**Topic Assignment**")
+                st.markdown(
+                    "<div class='topic-assign-card'>"
+                    "<div class='topic-assign-row'>"
+                    f"<span class='topic-chip topic-chip-primary'>{html.escape(topic_tag)}</span>"
+                    f"<span class='topic-chip'>{html.escape(topic_name)}</span>"
+                    f"<span class='topic-chip topic-chip-metric'>{html.escape(conf_text)}</span>"
+                    "</div>"
+                    f"<div class='topic-keyword-wrap'>{topic_word_pills}</div>"
+                    "<div class='topic-assign-foot'>Assigned from overall topic model.</div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
 
             # Keywords below topic details
             review_keyword_rows = []
             if isinstance(per_review_keywords, list) and idx < len(per_review_keywords):
                 raw_items = per_review_keywords[idx] or []
                 if isinstance(raw_items, list):
+                    blocked_terms = {
+                        "idk",
+                        "tab",
+                        "useful",
+                        "features",
+                        "pay",
+                        "sucks",
+                        "list",
+                        "force",
+                        "date",
+                    }
                     for item in raw_items:
                         if isinstance(item, dict):
                             term = str(item.get("keyword") or "").strip()
@@ -1569,11 +2339,29 @@ def render_analysis_results(analysis: dict):
                             score = 0.0
                         if not term:
                             continue
+                        if term.lower() in blocked_terms:
+                            continue
                         review_keyword_rows.append({"keyword": term, "score": score})
 
             if review_keyword_rows:
-                st.markdown("**Keywords (this review)**")
-                st.write(", ".join(row["keyword"] for row in review_keyword_rows[:8]))
+                st.markdown("**Keywords**")
+                keyword_weights = {}
+                for rank_idx, row in enumerate(review_keyword_rows):
+                    kw = str(row.get("keyword") or "").strip()
+                    if not kw:
+                        continue
+                    score = _safe_float(row.get("score"), 0.0)
+                    if score <= 0:
+                        score = max(0.1, 1.0 - (rank_idx * 0.08))
+                    keyword_weights[kw] = max(keyword_weights.get(kw, 0.0), score)
+                if keyword_weights:
+                    _render_weighted_wordcloud(
+                        keyword_weights,
+                        key_prefix=f"per_review_keywords_{idx}",
+                        width=1000,
+                        height=360,
+                        max_words=50,
+                    )
                 st.dataframe(pd.DataFrame(review_keyword_rows), hide_index=True, use_container_width=True)
 
 # ===== Confirmation & identifier extraction =====
