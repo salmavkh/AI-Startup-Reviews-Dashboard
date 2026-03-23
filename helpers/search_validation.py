@@ -6,7 +6,7 @@ from fetchers.ios import extract_app_id_from_ios_url
 from fetchers.trustpilot import extract_slug_from_trustpilot_url
 
 
-def validate_search_inputs(query: str, platform: str, num_reviews: int, cluster: str) -> list:
+def validate_search_inputs(query: str, platform: str, num_reviews: int, cluster: str | None = None) -> list:
     """Validate initial search form inputs. Returns list of error messages."""
     errors = []
     
@@ -16,9 +16,6 @@ def validate_search_inputs(query: str, platform: str, num_reviews: int, cluster:
         errors.append("Please select a platform before searching.")
     if not (isinstance(num_reviews, int) and 1 <= num_reviews <= 100):
         errors.append("Please enter a number of reviews between 1 and 100.")
-    if cluster is None:
-        errors.append("Please select your AI startup cluster before searching.")
-    
     return errors
 
 
@@ -27,7 +24,7 @@ def validate_submit_inputs(picked_result: bool, pasted_link: str) -> list:
     errors = []
     
     if not picked_result and not (pasted_link and pasted_link.strip()):
-        errors.append("Please select one of the results, or paste the app/company link on the right.")
+        errors.append("Please select one of the results, or paste the app/company link.")
     
     return errors
 

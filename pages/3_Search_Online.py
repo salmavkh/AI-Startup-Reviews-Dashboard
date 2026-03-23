@@ -1,135 +1,201 @@
-import streamlit as st
 import hashlib
+import html
 import json
 
+import streamlit as st
+
+from fetchers.g2 import search_g2
 from fetchers.google_play import search_google_play
 from fetchers.ios import search_ios
-from fetchers.g2 import search_g2
 from fetchers.trustpilot import search_trustpilot
-from inference.topic import predict_topic_batch_all
-from inference.sentiment import predict_single as predict_sentiment_single
-from inference.emotion import emotion_percentages, predict_proba_single
-from inference.va import predict_va_single, summarize_va
-from inference.llm_topic_summary import llm_topic_summary
-from inference.keywords import extract_keywords_batch
 from fetchers.language_filter import filter_english_reviews
-
-# Import refactored helpers
 from helpers.search_ui_helpers import (
-    fetch_reviews_for_ui, process_search_results, logo_html, render_result_card,
-    render_review_preview, render_analysis_results, extract_identifier_info, render_confirmed_company
+    extract_identifier_info,
+    fetch_reviews_for_ui,
+    logo_html,
+    process_search_results,
+    render_analysis_results,
 )
-from helpers.search_validation import validate_search_inputs, validate_submit_inputs, parse_pasted_link
+from helpers.search_validation import parse_pasted_link, validate_search_inputs, validate_submit_inputs
+from inference.emotion import emotion_percentages, predict_proba_single
+from inference.keywords import extract_keywords_batch
+from inference.llm_topic_label import llm_label_topics_from_keywords
+from inference.llm_topic_summary import llm_topic_summary
+from inference.sentiment import predict_single as predict_sentiment_single
+from inference.topic import discover_topics_batch
+from inference.va import predict_va_single, summarize_va
 
 st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout="wide")
 
 TOPIC_EXAMPLES_PER_THEME = 2
 KEYWORDS_PER_REVIEW = 5
 KEYWORDS_OVERALL = 20
+DIRECT_LINK_PLATFORMS = {"G2", "Trustpilot"}
 
-# --- CSS (same vibe as your other pages) ---
 st.markdown(
     """
     <style>
       .field-title {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
 
-      /* tighten spacing under our custom titles */
-      div[data-testid="stTextInput"], div[data-testid="stRadio"] {
-        margin-top: 0px;
-      }
-
-      /* results heading (smaller than primary headings) */
-      .results-heading {
-        font-size: 15px;
-        font-weight: 600;
+      .section-title {
+        font-size: 20px;
+        font-weight: 500;
         margin: 0 0 10px 0;
-        color: #222;
       }
 
-      /* compact card style for result tiles */
-      .result-card {
-        border: 1px solid rgba(0,0,0,0.10);
+      .result-option-card {
+        border: 1px solid rgba(0, 0, 0, 0.12);
         border-radius: 10px;
-        padding: 8px 10px;
-        background: white;
-        margin-bottom: 8px;
+        padding: 10px;
+        margin-bottom: 10px;
+        background: #ffffff;
       }
 
-      /* selected state: stronger border + subtle lift */
-      .result-card.selected {
+      .result-option-card.selected {
         border: 2px solid #000000;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
-        padding: 7px 9px; /* account for thicker border */
+        padding: 9px;
       }
 
-      /* small circular indicator shown for selected cards */
-      .result-card.selected::before {
-        content: '';
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #000;
-        display: inline-block;
-        margin-right: 10px;
-        vertical-align: middle;
+      .result-option-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
       }
 
-      .result-card img, .result-card svg {
-        width: 48px;
-        height: 48px;
-        border-radius: 8px;
-        object-fit: cover;
-        display: block;
+      .result-option-logo {
+        width: 40px;
+        height: 40px;
+        flex: 0 0 40px;
       }
 
-      .result-card .name {
+      .result-option-name {
         font-size: 14px;
-        font-weight: 600;
-        margin: 0;
+        font-weight: 500;
+        line-height: 1.2;
       }
 
-      .result-card .subtitle {
+      .result-option-subtitle {
         font-size: 12px;
-        color: #666;
+        color: #6f6f6f;
         margin-top: 2px;
       }
 
-      /* smaller select buttons inside cards */
-      .result-card button {
-        padding: 6px 10px !important;
-        font-size: 13px !important;
-        border-radius: 8px !important;
+      .none-option {
+        font-size: 16px;
+        line-height: 1.2;
+        margin-top: 2px;
+      }
+
+      .company-header {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 2px 0 8px 0;
+      }
+
+      .fetched-count {
+        text-align: right;
+        font-size: 16px;
+        margin-top: 6px;
+      }
+
+      .preview-card {
+        border: 1px solid #d6d6d6;
+        border-radius: 12px;
+        min-height: 130px;
+        padding: 14px 16px 14px 40px;
+        background: #f7f8fa;
+        margin-bottom: 14px;
+        position: relative;
+      }
+
+      .preview-card::before {
+        content: "“";
+        position: absolute;
+        left: 12px;
+        top: 8px;
+        font-size: 26px;
+        line-height: 1;
+        color: #9aa3af;
+      }
+
+      .preview-card-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #2f3340;
+      }
+
+      .preview-card-content {
+        font-size: 15px;
+        line-height: 1.45;
+        color: #2a2f3a;
+      }
+
+      .divider-line {
+        border-top: 1px solid #d9d9d9;
+        margin: 12px 0 22px 0;
+      }
+
+      .vertical-divider {
+        width: 1px;
+        background: #d9d9d9;
+        min-height: 980px;
+        margin: 0 auto;
+      }
+
+      div[data-testid="stButton"] button[kind="primary"] {
+        background-color: #000000;
+        border: 1px solid #000000;
+        color: #ffffff;
+      }
+
+      div[data-testid="stButton"] button[kind="primary"]:hover {
+        background-color: #171717;
+        border-color: #171717;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"] {
+        background-color: #ffffff;
+        border: 1px solid #c3c8d0;
+        color: #2e3340;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"]:hover {
+        background-color: #f7f9fc;
+        border-color: #aeb6c2;
       }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Back button
 if st.button("← Back"):
     st.switch_page("app.py")
 
 st.header("Search Online Reviews")
 
-# ---------------------------
-# Session state initialization
-# ---------------------------
+
 defaults = {
     "search3_errors": [],
     "search3_search_clicked": False,
     "search3_submit_clicked": False,
     "search3_results": [],
     "search3_selected_result": None,
+    "search3_none_selected": False,
     "search3_pasted_link": "",
     "search3_num_reviews": 20,
     "search3_fetched_reviews": [],
     "search3_confirmed_company": None,
     "search3_fetched_for": {},
     "search3_preview_analysis": None,
+    "search3_review_carousel_start": 0,
+    "search3_query_input": "",
+    "search3_platform": None,
+    "search3_num_reviews_input": 20,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -205,6 +271,7 @@ def _build_top_topics_payload(
             review_texts=review_texts,
             per_topic_limit=examples_per_topic,
         )
+
     items = [(tid, c) for tid, c in counts.items() if tid != -1]
     items.sort(key=lambda x: x[1], reverse=True)
     return [
@@ -256,370 +323,457 @@ def _reviews_signature(rows: list[dict] | None) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
-# -----------------------------------------------------------------
-# Session state initialization
-# -----------------------------------------------------------------
-left, right = st.columns([3, 2], gap="large")
+def _run_analysis_on_rows(rows: list[dict]) -> dict:
+    texts = [(r.get("content") or "").strip() for r in rows]
+    cluster_label = "General online review feedback"
 
-# ---------------------------
-# LEFT: inputs + Search button
-# ---------------------------
-with left:
-    st.markdown('<div class="field-title">Search your company name</div>', unsafe_allow_html=True)
-    query = st.text_input(
-        "Search your company name",
-        placeholder="Search",
-        label_visibility="collapsed",
-    )
+    topic_res = None
+    topic_summary_text = ""
+    topic_labels = {}
 
-    st.write("")
+    with st.spinner("Running topic model..."):
+        try:
+            topic_res = discover_topics_batch(
+                texts,
+                top_k_words=10,
+                min_topic_size=5,
+            )
+        except Exception as exc:
+            st.warning(f"Topic model failed: {exc}")
+            topic_res = None
+
+    if topic_res:
+        with st.spinner("Generating high-level topic names..."):
+            try:
+                topic_labels = llm_label_topics_from_keywords(
+                    cluster_label=cluster_label,
+                    keywords_by_topic=topic_res.get("keywords_by_topic") or {},
+                )
+            except Exception as exc:
+                st.warning(f"Topic naming failed: {exc}")
+                topic_labels = {}
+            topic_res["topic_labels"] = topic_labels
+
+        with st.spinner("Generating LLM topic summary..."):
+            try:
+                topic_summary_text = _topic_summary_or_empty(
+                    topic_res=topic_res,
+                    total_reviews=len(texts),
+                    cluster_label=cluster_label,
+                    review_texts=texts,
+                    examples_per_topic=TOPIC_EXAMPLES_PER_THEME,
+                )
+            except Exception as exc:
+                st.warning(f"LLM summary failed: {exc}")
+                topic_summary_text = ""
+
+    with st.spinner("Running sentiment..."):
+        sentiments = [predict_sentiment_single(t or "") for t in texts]
+
+    with st.spinner("Extracting keywords..."):
+        if KEYWORDS_PER_REVIEW <= 0 and KEYWORDS_OVERALL <= 0:
+            keyword_res = {"per_review": [[] for _ in texts], "overall": []}
+        else:
+            try:
+                keyword_res = extract_keywords_batch(
+                    texts=texts,
+                    per_review_top_n=KEYWORDS_PER_REVIEW,
+                    overall_top_n=KEYWORDS_OVERALL,
+                )
+            except Exception as exc:
+                st.warning(f"Keyword extraction failed: {exc}")
+                keyword_res = {"per_review": [[] for _ in texts], "overall": []}
+
+    with st.spinner("Running emotion analysis..."):
+        va_by_review = [predict_va_single(t or "") for t in texts]
+        va_overall = summarize_va(va_by_review)
+        discrete_overall = emotion_percentages(texts, method="prob")
+        discrete_by_review = [predict_proba_single(t or "") for t in texts]
+
+    return {
+        "cluster_label": cluster_label,
+        "topic": topic_res,
+        "topic_summary": topic_summary_text,
+        "keywords": keyword_res,
+        "reviews_signature": _reviews_signature(rows),
+        "review_count": len(rows),
+        "sentiment": sentiments,
+        "emotion": {
+            "va": va_overall,
+            "discrete": discrete_overall,
+        },
+        "emotion_by_review": {
+            "va": va_by_review,
+            "discrete": discrete_by_review,
+        },
+        "reviews": rows,
+    }
+
+
+def _render_option_card(r: dict):
+    rid = str(r.get("id") or "")
+    is_selected = st.session_state.get("search3_selected_result") == rid
+
+    card_cols = st.columns([1, 11], gap="small")
+    with card_cols[0]:
+        if st.button("●" if is_selected else "○", key=f"search3_pick_dot_{rid}", use_container_width=True):
+            st.session_state.search3_selected_result = rid
+            st.session_state.search3_none_selected = False
+
+    with card_cols[1]:
+        selected_class = " selected" if is_selected else ""
+        st.markdown(
+            "<div class='result-option-card{}'>"
+            "<div class='result-option-row'>"
+            "<div class='result-option-logo'>{}</div>"
+            "<div>"
+            "<div class='result-option-name'>{}</div>"
+            "<div class='result-option-subtitle'>{}</div>"
+            "</div>"
+            "</div>"
+            "</div>".format(
+                selected_class,
+                logo_html(r.get("logo")),
+                html.escape(str(r.get("name") or "(unknown)")),
+                html.escape(str(r.get("subtitle") or "")),
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+layout_cols = st.columns([1.0, 0.03, 1.1], gap="large")
+left_panel, divider_panel, right_panel = layout_cols
+
+with divider_panel:
+    st.markdown("<div class='vertical-divider'></div>", unsafe_allow_html=True)
+
+with left_panel:
     st.markdown('<div class="field-title">What platform?</div>', unsafe_allow_html=True)
     platform = st.radio(
         "What platform?",
         options=["Google Play Store", "iOS App Store", "G2", "Trustpilot"],
-        index=None,  # IMPORTANT: no default selection
+        index=None,
         label_visibility="collapsed",
+        key="search3_platform",
     )
+
+    is_direct_link_mode = platform in DIRECT_LINK_PLATFORMS
+
+    st.write("")
+    if is_direct_link_mode:
+        st.markdown('<div class="field-title">Paste company link</div>', unsafe_allow_html=True)
+        placeholder = (
+            "e.g. https://www.g2.com/products/openai/reviews"
+            if platform == "G2"
+            else "e.g. https://www.trustpilot.com/review/spotify.com"
+        )
+        query = st.text_input(
+            "Paste company link",
+            placeholder=placeholder,
+            label_visibility="collapsed",
+            key="search3_query_input",
+        )
+    else:
+        st.markdown('<div class="field-title">Search your company name</div>', unsafe_allow_html=True)
+        query = st.text_input(
+            "Search your company name",
+            placeholder="Search",
+            label_visibility="collapsed",
+            key="search3_query_input",
+        )
 
     st.write("")
     st.markdown('<div class="field-title">How many reviews?</div>', unsafe_allow_html=True)
-    num_reviews = st.number_input(
-        "How many reviews?",
-        min_value=1,
-        max_value=100,
-        step=1,
-        value=st.session_state.get("search3_num_reviews", 20),
-        label_visibility="collapsed",
+    num_reviews = int(
+        st.number_input(
+            "How many reviews?",
+            min_value=1,
+            max_value=100,
+            step=1,
+            label_visibility="collapsed",
+            key="search3_num_reviews_input",
+        )
     )
 
     st.write("")
-    st.markdown('<div class="field-title">What cluster is your company?</div>', unsafe_allow_html=True)
-    cluster = st.radio(
-        "What cluster is your company?",
-        options=[
-            "Cluster 1 (AI-Charged Product/Service Providers)",
-            "Cluster 2 (AI Development Facilitators)",
-            "Cluster 3 (Data Analytics Providers)",
-            "Cluster 4 (Deep Tech Researchers)",
-        ],
-        index=None,  # IMPORTANT: no default selection
-        label_visibility="collapsed",
-    )
-
-    st.write("")
-    if st.button("Search", type="primary"):
+    primary_label = "Fetch Reviews" if is_direct_link_mode else "Search"
+    if st.button(primary_label, type="primary", use_container_width=True):
         st.session_state.search3_errors = []
         st.session_state.search3_num_reviews = num_reviews
+        st.session_state.search3_submit_clicked = False
+        st.session_state.search3_confirmed_company = None
+        st.session_state.search3_fetched_reviews = []
+        st.session_state.search3_fetched_for = {}
+        st.session_state.search3_preview_analysis = None
+        st.session_state.search3_review_carousel_start = 0
+        st.session_state.search3_pasted_link = ""
 
-        # Validate inputs
-        errors = validate_search_inputs(query, platform, num_reviews, cluster)
-        st.session_state.search3_errors = errors
+        if is_direct_link_mode:
+            errors = []
+            if not (query and query.strip()):
+                errors.append("Please paste the company link before fetching.")
+            if platform is None:
+                errors.append("Please select a platform before fetching.")
+            if not (isinstance(num_reviews, int) and 1 <= num_reviews <= 100):
+                errors.append("Please enter a number of reviews between 1 and 100.")
+            st.session_state.search3_errors = errors
+        else:
+            errors = validate_search_inputs(query, platform, num_reviews)
+            st.session_state.search3_errors = errors
 
         if st.session_state.search3_errors:
             st.session_state.search3_search_clicked = False
             st.session_state.search3_results = []
             st.session_state.search3_selected_result = None
+            st.session_state.search3_none_selected = False
             st.session_state.search3_pasted_link = ""
+            st.session_state.search3_submit_clicked = False
         else:
-            st.session_state.search3_search_clicked = True
-            st.session_state["cluster"] = cluster
+            if is_direct_link_mode:
+                confirmed, parse_errors = parse_pasted_link(platform, query)
+                if parse_errors:
+                    st.session_state.search3_errors = parse_errors
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_submit_clicked = False
+                    st.session_state.search3_results = []
+                elif not confirmed:
+                    st.session_state.search3_errors = ["Could not confirm company from the pasted link."]
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_submit_clicked = False
+                    st.session_state.search3_results = []
+                else:
+                    if not confirmed.get("name"):
+                        confirmed_name = (
+                            confirmed.get("g2_slug")
+                            or confirmed.get("tp_slug")
+                            or query.strip()
+                        )
+                        confirmed["name"] = confirmed_name
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_selected_result = None
+                    st.session_state.search3_none_selected = False
+                    st.session_state.search3_pasted_link = query.strip()
+                    st.session_state.search3_results = []
+                    st.session_state.search3_confirmed_company = confirmed
+                    st.session_state.search3_submit_clicked = True
+                    st.session_state.search3_preview_analysis = None
+                    st.session_state.search3_review_carousel_start = 0
+            else:
+                st.session_state.search3_search_clicked = True
+                st.session_state.search3_selected_result = None
+                st.session_state.search3_none_selected = False
+                st.session_state.search3_pasted_link = ""
 
-            st.session_state.search3_selected_result = None
-            st.session_state.search3_pasted_link = ""
-
-            candidates = []
-            try:
-                if platform == "Google Play Store":
-                    candidates = search_google_play(query, limit=5)
-                elif platform == "iOS App Store":
-                    candidates = search_ios(query, limit=5)
-                elif platform == "G2":
-                    candidates = search_g2(query, limit=5)
-                elif platform == "Trustpilot":
-                    candidates = search_trustpilot(query, limit=5)
-            except Exception as e:
-                st.session_state.search3_errors.append(f"Search failed: {e}")
                 candidates = []
+                try:
+                    if platform == "Google Play Store":
+                        candidates = search_google_play(query, limit=5)
+                    elif platform == "iOS App Store":
+                        candidates = search_ios(query, limit=5)
+                    elif platform == "G2":
+                        candidates = search_g2(query, limit=5)
+                    elif platform == "Trustpilot":
+                        candidates = search_trustpilot(query, limit=5)
+                except Exception as exc:
+                    st.session_state.search3_errors.append(f"Search failed: {exc}")
+                    candidates = []
 
-            ui_candidates = process_search_results(candidates, platform)
-            st.session_state.search3_results = ui_candidates
+                st.session_state.search3_results = process_search_results(candidates, platform)
 
-            if platform == "G2" and not any(r.get("g2_slug") and not r.get("unverified") for r in ui_candidates):
-                st.session_state.search3_errors.append(
-                    "G2 search is often JS-protected — results may be blocked.\n"
-                    "If you have the product page, paste the G2 product URL on the right. "
-                    "You can also set APIFY_API_TOKEN in your environment — the app will use a public actor by default if you don't set APIFY_ACTOR_ID."
-                )
-                st.info("G2 often blocks direct scraping. Paste the G2 product URL on the right (recommended). If you set APIFY_API_TOKEN the app will try a public Apify actor by default; set APIFY_ACTOR_ID to use your own actor.")
-                st.write("Example: https://www.g2.com/products/<product-slug>/reviews")
+    if st.session_state.search3_search_clicked:
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Select your company from this possible results:</div>', unsafe_allow_html=True)
+        results = st.session_state.search3_results or []
 
-# Validation warnings
+        if results:
+            rows = [results[i:i + 2] for i in range(0, len(results), 2)]
+            for row in rows:
+                row_cols = st.columns(2, gap="large")
+                for ix, item in enumerate(row):
+                    with row_cols[ix]:
+                        _render_option_card(item)
+        else:
+            st.info("No results found. Try a different company/app name.")
+
+        none_selected = bool(st.session_state.get("search3_none_selected"))
+        none_cols = st.columns([1, 11], gap="small")
+        with none_cols[0]:
+            if st.button("●" if none_selected else "○", key="search3_pick_none", use_container_width=True):
+                st.session_state.search3_selected_result = None
+                st.session_state.search3_none_selected = True
+        with none_cols[1]:
+            selected_class = " selected" if none_selected else ""
+            st.markdown(
+                f"<div class='result-option-card{selected_class}'><div class='none-option'>None of those</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        if none_selected:
+            st.markdown('<div class="field-title">Paste the app/company link</div>', unsafe_allow_html=True)
+            st.text_input(
+                "Paste the app/company link",
+                placeholder="e.g. https://www.trustpilot.com/review/spotify.com",
+                label_visibility="collapsed",
+                key="search3_pasted_link",
+            )
+
+        st.write("")
+        if st.button("Submit", type="primary", use_container_width=True):
+            picked_result = st.session_state.search3_selected_result is not None
+            pasted_link = st.session_state.get("search3_pasted_link", "") if none_selected else ""
+            submit_errors = validate_submit_inputs(
+                picked_result,
+                pasted_link,
+            )
+            if submit_errors:
+                for err in submit_errors:
+                    st.warning(err)
+                st.session_state.search3_submit_clicked = False
+            else:
+                if picked_result:
+                    selected_id = st.session_state.search3_selected_result
+                    selected = None
+                    for rr in st.session_state.search3_results:
+                        if rr.get("id") == selected_id:
+                            selected = rr
+                            break
+
+                    if not selected:
+                        st.warning("Selected result not found. Please pick a result and submit again.")
+                        st.session_state.search3_submit_clicked = False
+                    else:
+                        st.session_state.search3_confirmed_company = {**selected, "source": "selection"}
+                        st.session_state.search3_submit_clicked = True
+                        st.session_state.search3_preview_analysis = None
+                        st.session_state.search3_review_carousel_start = 0
+                else:
+                    confirmed, parse_errors = parse_pasted_link(
+                        st.session_state.get("search3_platform"),
+                        st.session_state.get("search3_pasted_link", ""),
+                    )
+                    if parse_errors:
+                        for err in parse_errors:
+                            st.warning(err)
+                        st.session_state.search3_submit_clicked = False
+                    elif not confirmed:
+                        st.warning("Could not confirm company from the pasted link.")
+                        st.session_state.search3_submit_clicked = False
+                    else:
+                        st.session_state.search3_confirmed_company = confirmed
+                        st.session_state.search3_submit_clicked = True
+                        st.session_state.search3_preview_analysis = None
+                        st.session_state.search3_review_carousel_start = 0
+
 for msg in st.session_state.search3_errors:
     st.warning(msg)
 
-# ---------------------------
-# RIGHT: results + Submit flow
-# ---------------------------
-with right:
-    if st.session_state.search3_search_clicked:
-        st.markdown('<div class="results-heading">Select your company from these results:</div>', unsafe_allow_html=True)
 
-        results = st.session_state.search3_results
+with right_panel:
+    if st.session_state.search3_submit_clicked:
+        confirmed = st.session_state.get("search3_confirmed_company")
+        if confirmed:
+            identifier = extract_identifier_info(confirmed)
+            fetch_key = {
+                "platform": confirmed.get("platform"),
+                "identifier": (identifier[1] if identifier else None),
+                "limit": int(st.session_state.get("search3_num_reviews", 20)),
+            }
 
-        cols_per_row = 2
-        rows = [results[i:i+cols_per_row] for i in range(0, len(results), cols_per_row)]
-        for row in rows:
-            cols = st.columns(len(row), gap="large")
-            for ix, r in enumerate(row):
-                render_result_card(r, ix, cols)
-
-        none_choice = st.radio("", options=["None of those"], index=None, label_visibility="collapsed")
-        none_selected = (none_choice == "None of those") or (not results)
-
-        if none_selected:
-            st.markdown('<div class="field-title">Paste the app link here:</div>', unsafe_allow_html=True)
-            st.session_state.search3_pasted_link = st.text_input(
-                "Paste the app link here",
-                placeholder="e.g. https://www.trustpilot.com/review/spotify.com",
-                label_visibility="collapsed",
-                value=st.session_state.search3_pasted_link,
-            )
-            st.session_state.search3_selected_result = None
-
-        st.write("")
-        if st.button("Submit", type="primary"):
-            submit_errors = validate_submit_inputs(
-                st.session_state.search3_selected_result is not None,
-                st.session_state.search3_pasted_link
-            )
-
-            if submit_errors:
-                for e in submit_errors:
-                    st.warning(e)
-                st.session_state.search3_submit_clicked = False
-            else:
-                st.session_state.search3_confirmed_company = None
-
-                def _find_selected_result():
-                    sel = st.session_state.search3_selected_result
-                    if not sel:
-                        return None
-                    for rr in st.session_state.search3_results:
-                        if rr.get("id") == sel:
-                            return rr
-                    return None
-
-                confirmed = None
-                picked_result = st.session_state.search3_selected_result is not None
-                
-                if not picked_result:
-                    pasted = st.session_state.search3_pasted_link
-                    confirmed, errors = parse_pasted_link(platform, pasted)
-
-                    if errors:
-                        for e in errors:
-                            st.warning(e)
-                        st.session_state.search3_submit_clicked = False
-                        confirmed = None
-                else:
-                    sel = _find_selected_result()
-                    if not sel:
-                        st.warning("Selected result not found — please choose a result or paste a link.")
-                        st.session_state.search3_submit_clicked = False
-                        confirmed = None
-                    else:
-                        confirmed = sel.copy()
-                        confirmed["source"] = "selection"
-
-                if confirmed:
-                    st.session_state.search3_confirmed_company = confirmed
-                    st.session_state.search3_submit_clicked = True
-                else:
-                    st.session_state.search3_submit_clicked = False
-
-
-# ---------------------------
-# Confirmed company + preview fetch
-# ---------------------------
-if st.session_state.search3_submit_clicked:
-    st.markdown("## Confirmed company")
-
-    confirmed = st.session_state.get("search3_confirmed_company")
-    if not confirmed:
-        st.info("No company confirmed — please select a result or paste a valid link and Submit.")
-    else:
-        render_confirmed_company(confirmed)
-
-        preview_limit = min(5, max(1, int(st.session_state.get("search3_num_reviews", 5))))
-
-        prev = st.session_state.get("search3_fetched_reviews") or []
-        prev_key = st.session_state.get("search3_fetched_for") or {}
-
-        identifier = extract_identifier_info(confirmed)
-        should_fetch_preview = True
-        if prev and prev_key.get("platform") == confirmed.get("platform") and prev_key.get("identifier") == (identifier[1] if identifier else None):
-            should_fetch_preview = False
-
-        if should_fetch_preview:
-            with st.spinner("Fetching a short review preview (up to 5)..."):
-                preview = fetch_reviews_for_ui(confirmed.get("platform"), confirmed, limit=preview_limit)
-
-            st.session_state.search3_fetched_reviews = preview or []
-            st.session_state.search3_fetched_for = {"platform": confirmed.get("platform"), "identifier": (identifier[1] if identifier else None)}
-            st.session_state.search3_preview_analysis = None
-
-        st.info("A short preview of reviews is shown below. You can run analysis on the preview, or fetch the full set of reviews you requested.")
-
-        fetched = st.session_state.get("search3_fetched_reviews") or []
-        # Defensive cleanup for previously cached/session results.
-        fetched = filter_english_reviews(fetched, limit=None)
-        st.session_state.search3_fetched_reviews = fetched
-        platform = confirmed.get("platform")
-        
-        if not fetched:
-            if platform == "Google Play Store":
-                try:
-                    import google_play_scraper  # type: ignore
-                    gp_ok = True
-                except Exception:
-                    gp_ok = False
-
-                if not gp_ok:
-                    st.warning(
-                        "No reviews fetched — the `google_play_scraper` Python package is not available in this environment. "
-                        "Install it (`pip install google-play-scraper`) for reliable Play Store access, or paste a direct Play Store package/link."
+            if st.session_state.get("search3_fetched_for") != fetch_key:
+                with st.spinner(f"Fetching up to {fetch_key['limit']} reviews..."):
+                    fetched = fetch_reviews_for_ui(
+                        confirmed.get("platform"),
+                        confirmed,
+                        limit=fetch_key["limit"],
                     )
-                else:
-                    st.warning(
-                        "No reviews fetched — the Play Store likely returned no public reviews for that package from the requested storefront, "
-                        "or Google is blocking access from this host (rate-limiting / geo restrictions). Try a different storefront/package or paste a direct Play Store link."
-                    )
+                fetched = filter_english_reviews(fetched or [], limit=None)
 
-            elif platform == "G2":
-                st.warning("No reviews fetched from G2. G2 often requires a renderer (Apify) for reliable scraping.")
-                st.caption("If you have an Apify actor, set APIFY_API_TOKEN + APIFY_ACTOR_ID in your environment and restart the app.")
-                if st.button("Try fallback scraping (best-effort)", key="g2_try_fallback"):
-                    with st.spinner("Attempting a best-effort G2 HTML/JSON-LD scrape..."):
-                        try:
-                            preview = fetch_reviews_for_ui(platform, confirmed, limit=preview_limit)
-                        except Exception:
-                            preview = []
-                        st.session_state.search3_fetched_reviews = preview or []
-                        st.session_state.search3_preview_analysis = None
-
-            elif platform == "Trustpilot":
-                st.warning("No reviews fetched from Trustpilot (likely blocked/no public reviews). Try a different slug like the domain shown in the Trustpilot URL.")
-                st.caption("Example: paste a full Trustpilot page like https://www.trustpilot.com/review/<domain>")
-
-                if st.button("Retry Trustpilot fetch", key="tp_retry"):
-                    with st.spinner("Retrying Trustpilot fetch (Next.js JSON)..."):
-                        try:
-                            preview = fetch_reviews_for_ui(platform, confirmed, limit=preview_limit)
-                        except Exception:
-                            preview = []
-                        st.session_state.search3_fetched_reviews = preview or []
-                        st.session_state.search3_preview_analysis = None
-
-            else:
-                st.warning("No reviews could be fetched for this company (platform may block scraping). Try pasting a direct product link or check your environment.")
-        else:
-            render_review_preview(fetched, platform)
-
-            cols = st.columns([1, 1, 2])
-            with cols[0]:
-                if st.button("Run topic + sentiment + emotion on current set", key="run_preview_analysis"):
-                    texts = [(r.get("content") or "").strip() for r in fetched]
-                    cluster_label = st.session_state.get("cluster") or "All reviews"
-
-                    topic_res = None
-                    topic_summary_text = ""
-                    with st.spinner("Running topic model on preview..."):
-                        try:
-                            topic_res = predict_topic_batch_all(texts, top_k_words=10)
-                        except Exception as exc:
-                            st.error(f"Topic model failed: {exc}")
-                            topic_res = None
-
-                    if topic_res:
-                        with st.spinner("Generating LLM topic summary..."):
-                            try:
-                                topic_summary_text = _topic_summary_or_empty(
-                                    topic_res=topic_res,
-                                    total_reviews=len(texts),
-                                    cluster_label=cluster_label,
-                                    review_texts=texts,
-                                    examples_per_topic=TOPIC_EXAMPLES_PER_THEME,
-                                )
-                            except Exception as exc:
-                                st.warning(f"LLM summary failed: {exc}")
-                                topic_summary_text = ""
-
-                    with st.spinner("Running sentiment on preview..."):
-                        sentiments = [predict_sentiment_single(t or "") for t in texts]
-
-                    with st.spinner("Extracting keywords on current set..."):
-                        if KEYWORDS_PER_REVIEW <= 0 and KEYWORDS_OVERALL <= 0:
-                            keyword_res = {"per_review": [[] for _ in texts], "overall": []}
-                        else:
-                            try:
-                                keyword_res = extract_keywords_batch(
-                                    texts=texts,
-                                    per_review_top_n=KEYWORDS_PER_REVIEW,
-                                    overall_top_n=KEYWORDS_OVERALL,
-                                )
-                            except Exception as exc:
-                                st.warning(f"Keyword extraction failed: {exc}")
-                                keyword_res = {"per_review": [[] for _ in texts], "overall": []}
-
-                    with st.spinner("Running emotion analysis on current set..."):
-                        # 1) VA regression
-                        va_by_review = [predict_va_single(t or "") for t in texts]
-                        va_overall = summarize_va(va_by_review)
-
-                        # 2) Discrete emotion distribution
-                        discrete_overall = emotion_percentages(texts, method="prob")
-                        discrete_by_review = [predict_proba_single(t or "") for t in texts]
-
-                    st.session_state.search3_preview_analysis = {
-                        "cluster_label": cluster_label,
-                        "topic": topic_res,
-                        "topic_summary": topic_summary_text,
-                        "topic_llm_by_review": {},
-                        "keywords": keyword_res,
-                        "reviews_signature": _reviews_signature(fetched),
-                        "review_count": len(fetched),
-                        "sentiment": sentiments,
-                        "emotion": {
-                            "va": va_overall,
-                            "discrete": discrete_overall,
-                        },
-                        "emotion_by_review": {
-                            "va": va_by_review,
-                            "discrete": discrete_by_review,
-                        },
-                        "reviews": fetched,
-                    }
-
-            with cols[1]:
-                if st.button(f"Fetch {st.session_state.get('search3_num_reviews', 20)} reviews", key="fetch_full_reviews"):
-                    full_n = int(st.session_state.get("search3_num_reviews", 20))
-                    with st.spinner(f"Fetching up to {full_n} reviews (this may take a moment)..."):
-                        full = fetch_reviews_for_ui(platform, confirmed, limit=full_n)
-                    st.session_state.search3_fetched_reviews = full or []
-                    st.session_state.search3_preview_analysis = None
-                    st.success(f"Fetched {len(full or [])} reviews. You can now run analysis on the full set.")
-
-            with cols[2]:
-                st.write("\n")
-                st.caption("Reviews are cached for 30 minutes in the app session (except Trustpilot). No inference is run without your explicit action.")
-
-        analysis = st.session_state.get("search3_preview_analysis")
-        if analysis:
-            current_sig = _reviews_signature(st.session_state.get("search3_fetched_reviews") or [])
-            analysis_sig = str(analysis.get("reviews_signature") or "")
-            if not analysis_sig or analysis_sig != current_sig:
-                st.warning("Review set changed since last analysis. Please rerun analysis.")
+                st.session_state.search3_fetched_reviews = fetched
+                st.session_state.search3_fetched_for = fetch_key
                 st.session_state.search3_preview_analysis = None
-                analysis = None
-        if analysis:
-            render_analysis_results(analysis)
+                st.session_state.search3_review_carousel_start = 0
+
+            fetched = st.session_state.get("search3_fetched_reviews") or []
+
+            header_cols = st.columns([3, 2])
+            with header_cols[0]:
+                st.markdown(
+                    f"<div class='company-header'>{html.escape(str(confirmed.get('name') or '(name not available)'))}</div>",
+                    unsafe_allow_html=True,
+                )
+            with header_cols[1]:
+                st.markdown(
+                    f"<div class='fetched-count'>Fetched: {len(fetched)} reviews</div>",
+                    unsafe_allow_html=True,
+                )
+
+            if not fetched:
+                st.warning("No reviews were fetched for this company. Try another result or lower the review count.")
+            else:
+                total_reviews = len(fetched)
+                window_size = 5
+                max_start = max(0, total_reviews - window_size)
+                start = int(st.session_state.get("search3_review_carousel_start", 0))
+                start = max(0, min(start, max_start))
+
+                nav_cols = st.columns([1, 1, 4], gap="small")
+                with nav_cols[0]:
+                    prev_clicked = st.button(
+                        "Prev",
+                        key="search3_prev_page",
+                        use_container_width=True,
+                        disabled=(start <= 0),
+                    )
+                with nav_cols[1]:
+                    next_clicked = st.button(
+                        "Next",
+                        key="search3_next_page",
+                        use_container_width=True,
+                        disabled=(start >= max_start),
+                    )
+
+                if prev_clicked:
+                    start = max(0, start - window_size)
+                if next_clicked:
+                    start = min(max_start, start + window_size)
+                st.session_state.search3_review_carousel_start = start
+
+                end = min(total_reviews, start + window_size)
+                with nav_cols[2]:
+                    st.caption(f"Showing {start + 1}-{end} of {total_reviews} fetched reviews.")
+
+                for review_idx, row in enumerate(fetched[start:end], start=start + 1):
+                    row = row or {}
+                    title = (row.get("title") or f"Review {review_idx}").strip()
+                    content = (row.get("content") or "").strip()
+                    snippet = content[:220] + ("..." if len(content) > 220 else "")
+                    st.markdown(
+                        "<div class='preview-card'>"
+                        f"<div class='preview-card-title'>{html.escape(title)}</div>"
+                        f"<div class='preview-card-content'>{html.escape(snippet or '(no text)')}</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                analyze_cols = st.columns([2, 3, 2])
+                with analyze_cols[1]:
+                    if st.button("Analyze", type="primary", use_container_width=True):
+                        st.session_state.search3_preview_analysis = _run_analysis_on_rows(fetched)
+    else:
+        st.caption("Select and submit a company to preview fetched reviews here.")
+
+analysis = st.session_state.get("search3_preview_analysis")
+if analysis:
+    current_sig = _reviews_signature(st.session_state.get("search3_fetched_reviews") or [])
+    analysis_sig = str(analysis.get("reviews_signature") or "")
+    if not analysis_sig or analysis_sig != current_sig:
+        st.warning("Review set changed since last analysis. Please run Analyze again.")
+        st.session_state.search3_preview_analysis = None
+        analysis = None
+
+if analysis:
+    render_analysis_results(
+        analysis,
+        show_section_heading=False,
+        compact_top_spacing=True,
+    )

@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 from fetchers.language_filter import is_english_review
 
 ENGLISH_STOREFRONTS = ["us", "gb", "au", "ie", "nz", "sg"]
+PACKAGE_RE = re.compile(r"[a-z0-9_]+(?:\.[a-z0-9_]+)+", re.IGNORECASE)
 
 
 def _safe_get(url: str, **kwargs) -> Optional[requests.Response]:
@@ -23,6 +24,27 @@ def _safe_get(url: str, **kwargs) -> Optional[requests.Response]:
         return requests.get(url, timeout=12, allow_redirects=True, **kwargs)
     except Exception:
         return None
+
+
+def _is_valid_package(package: str) -> bool:
+    return bool(package and PACKAGE_RE.fullmatch(package.strip()))
+
+
+def _extract_package_from_search_hit(hit: Dict[str, Any]) -> Optional[str]:
+    for key in ("appId", "app_id", "package", "packageName"):
+        value = hit.get(key)
+        if isinstance(value, str) and _is_valid_package(value):
+            return value.strip()
+
+    for key in ("url", "appUrl", "storeUrl", "link"):
+        value = hit.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        pkg = extract_package_from_google_play_url(value)
+        if pkg and _is_valid_package(pkg):
+            return pkg
+
+    return None
 
 
 def _normalize_review(
@@ -60,13 +82,28 @@ def search_google_play(query: str, limit: int = 5, country: str = "us", lang: st
     if gp_search is not None:
         try:
             hits = gp_search(query, lang=lang, country=country, n_hits=limit)
-            for h in hits[:limit]:
+            seen_keys = set()
+            for h in hits:
+                title = (h.get("title") or "").strip()
+                subtitle = (h.get("developer") or h.get("genre") or "").strip()
+                pkg = _extract_package_from_search_hit(h or {})
+
+                if pkg:
+                    dedupe_key = ("pkg", pkg.lower())
+                else:
+                    dedupe_key = ("name", title.lower(), subtitle.lower())
+
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
                 out.append({
-                    "name": h.get("title"),
-                    "subtitle": h.get("developer") or h.get("genre") or "",
+                    "name": title or pkg or query,
+                    "subtitle": subtitle,
                     "logo": h.get("icon"),
-                    "package": h.get("appId") or h.get("appId"),
+                    "package": pkg,
                 })
+                if len(out) >= limit:
+                    break
             return out
         except Exception:
             pass
@@ -84,7 +121,7 @@ def search_google_play(query: str, limit: int = 5, country: str = "us", lang: st
         if not m:
             continue
         pkg = m.group(1)
-        if pkg in seen:
+        if pkg in seen or not _is_valid_package(pkg):
             continue
         seen.add(pkg)
         title = a.get("aria-label") or (a.find("div") or {}).get_text(strip=True) or pkg
