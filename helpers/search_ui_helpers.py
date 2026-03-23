@@ -380,9 +380,18 @@ def render_review_preview(fetched: list, platform: str):
         )
 
 
-def render_analysis_results(analysis: dict):
+def render_analysis_results(
+    analysis: dict,
+    show_overall: bool = True,
+    show_per_review: bool = True,
+    show_topic_assignment: bool = True,
+    show_section_heading: bool = True,
+    show_topic_title_before_keywords: bool = False,
+    show_review_preview: bool = True,
+):
     """Render topic + sentiment analysis results."""
-    st.markdown("---\n### Preview analysis")
+    if show_section_heading:
+        st.markdown("---\n### Preview analysis")
     st.markdown(
         """
         <style>
@@ -583,7 +592,25 @@ def render_analysis_results(analysis: dict):
         """,
         unsafe_allow_html=True,
     )
-    tabs = st.tabs(["Overall Results", "Insights per Review"])
+    if not show_overall and not show_per_review:
+        return
+
+    overall_placeholder = None
+    per_review_placeholder = None
+    has_tabbed_view = bool(show_overall and show_per_review)
+
+    if has_tabbed_view:
+        tabs = st.tabs(["Overall Results", "Insights per Review"])
+        overall_tab = tabs[0]
+        per_review_tab = tabs[1]
+    elif show_per_review:
+        per_review_tab = st.container()
+        overall_placeholder = st.empty()
+        overall_tab = overall_placeholder.container()
+    else:
+        overall_tab = st.container()
+        per_review_placeholder = st.empty()
+        per_review_tab = per_review_placeholder.container()
 
     reviews = analysis.get("reviews") or []
     sentiments = analysis.get("sentiment") or []
@@ -1531,7 +1558,7 @@ def render_analysis_results(analysis: dict):
     # --------------------
     # Overall tab
     # --------------------
-    with tabs[0]:
+    with overall_tab:
         st.markdown("<div class='analysis-title'>Sentiment analysis</div>", unsafe_allow_html=True)
         st.markdown(
             "<div class='analysis-subtitle'>Quickly see whether overall sentiment leans positive or negative.</div>",
@@ -1778,7 +1805,12 @@ def render_analysis_results(analysis: dict):
                         if picked_idx is not None and 0 <= int(picked_idx) < len(reviews):
                             if picked_idx != st.session_state.get("search3_review_idx"):
                                 st.session_state.search3_review_idx = picked_idx
-                                st.success(f"Selected Review {picked_idx + 1}. Open 'Insights per Review' tab to view details.")
+                                if has_tabbed_view:
+                                    st.success(
+                                        f"Selected Review {picked_idx + 1}. Open 'Insights per Review' tab to view details."
+                                    )
+                                else:
+                                    st.success(f"Selected Review {picked_idx + 1}.")
                     else:
                         st.scatter_chart(df_va, x="valence", y="arousal", color="quadrant")
 
@@ -1937,7 +1969,7 @@ def render_analysis_results(analysis: dict):
         counts = topic_payload.get("counts") or {}
         keywords = topic_keywords_by_topic or {}
         topic_summary = (analysis.get("topic_summary") or "").strip()
-        if counts or topic_summary:
+        if show_topic_assignment and (counts or topic_summary):
             st.markdown("<div class='analysis-title'>Topic Modelling</div>", unsafe_allow_html=True)
             c_v_overall = topic_coherence.get("c_v_overall")
             c_v_available = bool(topic_coherence.get("available"))
@@ -2125,7 +2157,7 @@ def render_analysis_results(analysis: dict):
     # --------------------
     # Per-review tab
     # --------------------
-    with tabs[1]:
+    with per_review_tab:
         if not reviews:
             st.caption("No per-review details to show yet.")
         else:
@@ -2146,38 +2178,39 @@ def render_analysis_results(analysis: dict):
             meta = " · ".join(
                 [p for p in [platform, date, (stars if stars else None)] if p]
             )
-            safe_body = html.escape(content or "(no review text)").replace("\n", "<br/>")
+            if show_review_preview:
+                safe_body = html.escape(content or "(no review text)").replace("\n", "<br/>")
 
-            st.markdown(
-                "<div class='review-box'>"
-                f"<div class='review-count-label'>Review {idx + 1} of {n}</div>"
-                f"<div style='font-size:14px;font-weight:600;margin-bottom:6px;'>{html.escape(title)}</div>"
-                f"<div style='font-size:14px;line-height:1.45;'>{safe_body}</div>"
-                f"<div class='review-meta'>{html.escape(meta)}</div>"
-                "</div>",
-                unsafe_allow_html=True,
-            )
-
-            nav_cols = st.columns([1, 1, 1, 3], gap="small")
-            with nav_cols[0]:
-                if st.button("Prev", key="review_prev", use_container_width=True):
-                    st.session_state.search3_review_idx = (idx - 1) % n
-                    st.rerun()
-            with nav_cols[1]:
-                if st.button("Next", key="review_next", use_container_width=True):
-                    st.session_state.search3_review_idx = (idx + 1) % n
-                    st.rerun()
-            with nav_cols[2]:
-                if st.button("Random review", key="review_rand", use_container_width=True):
-                    st.session_state.search3_review_idx = random.randrange(0, n)
-                    st.rerun()
-            with nav_cols[3]:
-                review_status = f"Showing review {st.session_state.search3_review_idx + 1} of {n}"
                 st.markdown(
-                    f"<div style='text-align:right;color:#7b818c;font-size:0.9rem;padding-top:6px;'>"
-                    f"{html.escape(review_status)}</div>",
+                    "<div class='review-box'>"
+                    f"<div class='review-count-label'>Review {idx + 1} of {n}</div>"
+                    f"<div style='font-size:14px;font-weight:600;margin-bottom:6px;'>{html.escape(title)}</div>"
+                    f"<div style='font-size:14px;line-height:1.45;'>{safe_body}</div>"
+                    f"<div class='review-meta'>{html.escape(meta)}</div>"
+                    "</div>",
                     unsafe_allow_html=True,
                 )
+
+                nav_cols = st.columns([1, 1, 1, 3], gap="small")
+                with nav_cols[0]:
+                    if st.button("Prev", key="review_prev", use_container_width=True):
+                        st.session_state.search3_review_idx = (idx - 1) % n
+                        st.rerun()
+                with nav_cols[1]:
+                    if st.button("Next", key="review_next", use_container_width=True):
+                        st.session_state.search3_review_idx = (idx + 1) % n
+                        st.rerun()
+                with nav_cols[2]:
+                    if st.button("Random review", key="review_rand", use_container_width=True):
+                        st.session_state.search3_review_idx = random.randrange(0, n)
+                        st.rerun()
+                with nav_cols[3]:
+                    review_status = f"Showing review {st.session_state.search3_review_idx + 1} of {n}"
+                    st.markdown(
+                        f"<div style='text-align:right;color:#7b818c;font-size:0.9rem;padding-top:6px;'>"
+                        f"{html.escape(review_status)}</div>",
+                        unsafe_allow_html=True,
+                    )
 
             idx = st.session_state.search3_review_idx
             r = reviews[idx]
@@ -2429,7 +2462,7 @@ def render_analysis_results(analysis: dict):
             except Exception:
                 topic_id = None
 
-            if topic_id is not None:
+            if show_topic_assignment and topic_id is not None:
                 st.markdown("<div class='analysis-title'>Topic Modelling</div>", unsafe_allow_html=True)
                 blocked_terms = {
                     "idk",
@@ -2539,6 +2572,8 @@ def render_analysis_results(analysis: dict):
                         review_keyword_rows.append({"keyword": term, "score": score})
 
             if review_keyword_rows:
+                if show_topic_title_before_keywords:
+                    st.markdown("<div class='analysis-title'>Topic Modelling</div>", unsafe_allow_html=True)
                 st.markdown("**Keywords**")
                 keyword_weights = {}
                 for rank_idx, row in enumerate(review_keyword_rows):
@@ -2558,6 +2593,11 @@ def render_analysis_results(analysis: dict):
                         max_words=50,
                     )
                 st.dataframe(pd.DataFrame(review_keyword_rows), hide_index=True, use_container_width=True)
+
+    if overall_placeholder is not None:
+        overall_placeholder.empty()
+    if per_review_placeholder is not None:
+        per_review_placeholder.empty()
 
 # ===== Confirmation & identifier extraction =====
 

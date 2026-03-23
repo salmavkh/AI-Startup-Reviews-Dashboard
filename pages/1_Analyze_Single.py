@@ -1,24 +1,55 @@
 import streamlit as st
-import pandas as pd
 
-from inference.sentiment import predict_single
-from inference.emotion import predict_proba_single
-from inference.topic import predict_topic_single
-from inference.llm_topic_label import llm_label_topic
+from helpers.search_ui_helpers import render_analysis_results
+from inference.emotion import emotion_percentages, predict_proba_single
+from inference.keywords import extract_keywords_batch
+from inference.llm_topic_label import llm_label_topics_from_keywords
+from inference.llm_topic_summary import llm_topic_summary
+from inference.sentiment import predict_single as predict_sentiment_single
+from inference.topic import discover_topics_batch
+from inference.va import predict_va_single, summarize_va
 
 st.set_page_config(page_title="Analyze a Single Review", page_icon="📝", layout="wide")
+
+TOPIC_EXAMPLES_PER_THEME = 2
+KEYWORDS_PER_REVIEW = 5
+KEYWORDS_OVERALL = 20
+GENERAL_CLUSTER_LABEL = "General online review feedback"
 
 st.markdown(
     """
     <style>
       .field-title {
-        font-size: 20px;
+        font-size: 16px;
         font-weight: 400;
         margin: 0 0 6px 0;
       }
+
       textarea {
         padding-top: 8px !important;
         padding-bottom: 8px !important;
+      }
+
+      div[data-testid="stButton"] button[kind="primary"] {
+        background-color: #000000;
+        border: 1px solid #000000;
+        color: #ffffff;
+      }
+
+      div[data-testid="stButton"] button[kind="primary"]:hover {
+        background-color: #171717;
+        border-color: #171717;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"] {
+        background-color: #ffffff;
+        border: 1px solid #c3c8d0;
+        color: #2e3340;
+      }
+
+      div[data-testid="stButton"] button[kind="secondary"]:hover {
+        background-color: #f7f9fc;
+        border-color: #aeb6c2;
       }
     </style>
     """,
@@ -30,119 +61,244 @@ if st.button("← Back"):
 
 st.header("Analyze a Single Review")
 
-# --- Session state ---
 if "single_errors" not in st.session_state:
     st.session_state.single_errors = []
 if "single_result" not in st.session_state:
     st.session_state.single_result = None
 
-clusters = [
-    "Cluster 1 (AI-Charged Product/Service Providers)",
-    "Cluster 2 (AI Development Facilitators)",
-    "Cluster 3 (Data Analytics Providers)",
-    "Cluster 4 (Deep Tech Researchers)",
-]
 
-left, right = st.columns([3, 2], gap="large")
+def _collect_topic_examples_for_payload(
+    topic_res: dict,
+    review_texts: list[str],
+    per_topic_limit: int = TOPIC_EXAMPLES_PER_THEME,
+) -> dict:
+    examples_by_topic = {}
+    topics = topic_res.get("topics") or []
+    keywords_by_topic = topic_res.get("keywords_by_topic") or {}
+    if not isinstance(topics, list) or len(topics) != len(review_texts):
+        return examples_by_topic
 
-with left:
-    st.markdown('<div class="field-title">Enter a review</div>', unsafe_allow_html=True)
-    review_text = st.text_area(
-        "Enter a review",
-        placeholder="Type or paste a user review here...",
-        height=130,
-        label_visibility="collapsed",
+    per_topic_limit = max(1, min(5, int(per_topic_limit or 2)))
+    scored = {}
+
+    for idx, topic_id in enumerate(topics):
+        try:
+            tid = int(topic_id)
+        except Exception:
+            continue
+        if tid == -1:
+            continue
+
+        text = str(review_texts[idx] or "").strip()
+        if not text:
+            continue
+
+        text_lower = text.lower()
+        topic_keywords = [str(k).strip().lower() for k in keywords_by_topic.get(tid, [])[:10] if str(k).strip()]
+        overlap = sum(1 for kw in topic_keywords if kw and kw in text_lower)
+        if overlap <= 0:
+            continue
+
+        snippet = text[:180] + ("..." if len(text) > 180 else "")
+        scored.setdefault(tid, []).append((overlap, snippet))
+
+    for tid, rows in scored.items():
+        rows.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
+        picked = []
+        seen = set()
+        for _overlap, snippet in rows:
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            picked.append(snippet)
+            if len(picked) >= per_topic_limit:
+                break
+        if picked:
+            examples_by_topic[tid] = picked
+
+    return examples_by_topic
+
+
+def _build_top_topics_payload(
+    topic_res: dict,
+    total_reviews: int,
+    review_texts: list[str] | None = None,
+    examples_per_topic: int = TOPIC_EXAMPLES_PER_THEME,
+) -> list:
+    if not topic_res or total_reviews <= 0:
+        return []
+
+    counts = topic_res.get("counts") or {}
+    keywords_by_topic = topic_res.get("keywords_by_topic") or {}
+
+    examples_by_topic = {}
+    if review_texts:
+        examples_by_topic = _collect_topic_examples_for_payload(
+            topic_res=topic_res,
+            review_texts=review_texts,
+            per_topic_limit=examples_per_topic,
+        )
+
+    items = [(tid, c) for tid, c in counts.items() if tid != -1]
+    items.sort(key=lambda x: x[1], reverse=True)
+
+    return [
+        {
+            "topic_id": tid,
+            "count": c,
+            "pct": c / total_reviews,
+            "keywords": keywords_by_topic.get(tid, []),
+            "examples": examples_by_topic.get(tid, []),
+        }
+        for tid, c in items[:5]
+    ]
+
+
+def _topic_summary_or_empty(
+    topic_res: dict,
+    total_reviews: int,
+    cluster_label: str,
+    review_texts: list[str] | None = None,
+    examples_per_topic: int = TOPIC_EXAMPLES_PER_THEME,
+) -> str:
+    top_topics_payload = _build_top_topics_payload(
+        topic_res=topic_res,
+        total_reviews=total_reviews,
+        review_texts=review_texts,
+        examples_per_topic=examples_per_topic,
     )
+    if not top_topics_payload:
+        return ""
+    return llm_topic_summary(cluster_label, top_topics_payload)
 
-with right:
-    st.markdown('<div class="field-title">What cluster is AI Startup?</div>', unsafe_allow_html=True)
-    cluster = st.radio(
-        "What cluster is your company?",
-        options=clusters,
-        index=None,
-        label_visibility="collapsed",
-    )
 
-with left:
-    if st.button("Submit", type="primary"):
-        st.session_state.single_errors = []
-        st.session_state.single_result = None
+st.markdown('<div class="field-title">Enter a review</div>', unsafe_allow_html=True)
+review_text = st.text_area(
+    "Enter a review",
+    placeholder="Type or paste a user review here...",
+    height=130,
+    label_visibility="collapsed",
+)
 
-        review_ok = bool(review_text and review_text.strip())
-        cluster_ok = cluster is not None
+if st.button("Analyze", type="primary"):
+    st.session_state.single_errors = []
+    st.session_state.single_result = None
 
-        if not review_ok and not cluster_ok:
-            st.session_state.single_errors.append(
-                "Please enter a review and select your AI startup cluster before submitting."
-            )
-        elif not review_ok:
-            st.session_state.single_errors.append("Please enter a review before submitting.")
-        elif not cluster_ok:
-            st.session_state.single_errors.append("Please select your AI startup cluster before submitting.")
-        else:
-            try:
-                text = review_text.strip()
+    if not review_text or not review_text.strip():
+        st.session_state.single_errors.append("Please enter a review before submitting.")
+    else:
+        try:
+            text = review_text.strip()
+            texts = [text]
+            cluster_label = GENERAL_CLUSTER_LABEL
 
-                # 1) Sentiment
-                sentiment_label, sentiment_conf = predict_single(text)
+            topic_res = None
+            topic_summary_text = ""
+            topic_labels = {}
 
-                # 2) Emotion
-                emotion_dist = predict_proba_single(text)
+            with st.spinner("Running topic model..."):
+                try:
+                    topic_res = discover_topics_batch(
+                        texts,
+                        top_k_words=10,
+                        min_topic_size=5,
+                    )
+                except Exception as exc:
+                    st.warning(f"Topic model failed: {exc}")
+                    topic_res = None
 
-                # 3) Topic (cluster-specific BERTopic)
-                topic_res = predict_topic_single(text, cluster_label=cluster, top_k_words=10)
+            if topic_res:
+                with st.spinner("Generating high-level topic names..."):
+                    try:
+                        topic_labels = llm_label_topics_from_keywords(
+                            cluster_label=cluster_label,
+                            keywords_by_topic=topic_res.get("keywords_by_topic") or {},
+                        )
+                    except Exception as exc:
+                        st.warning(f"Topic naming failed: {exc}")
+                        topic_labels = {}
+                    topic_res["topic_labels"] = topic_labels
 
-                # 4) LLM human label + explanation (Groq)
-                llm_res = llm_label_topic(
-                    cluster_label=cluster,
-                    topic_id=topic_res["topic_id"],
-                    keywords=topic_res["keywords"],
-                    review_text=text[:600],  # keep short
-                )
+                with st.spinner("Generating LLM topic summary..."):
+                    try:
+                        topic_summary_text = _topic_summary_or_empty(
+                            topic_res=topic_res,
+                            total_reviews=len(texts),
+                            cluster_label=cluster_label,
+                            review_texts=texts,
+                            examples_per_topic=TOPIC_EXAMPLES_PER_THEME,
+                        )
+                    except Exception as exc:
+                        st.warning(f"LLM summary failed: {exc}")
+                        topic_summary_text = ""
 
-                st.session_state.single_result = {
-                    "cluster": cluster,
-                    "sentiment": {"label": sentiment_label, "confidence": sentiment_conf},
-                    "emotion": emotion_dist,
-                    "topic": topic_res,
-                    "topic_llm": llm_res,
+            with st.spinner("Running sentiment..."):
+                sentiments = [predict_sentiment_single(text)]
+
+            with st.spinner("Extracting keywords..."):
+                if KEYWORDS_PER_REVIEW <= 0 and KEYWORDS_OVERALL <= 0:
+                    keyword_res = {"per_review": [[]], "overall": []}
+                else:
+                    try:
+                        keyword_res = extract_keywords_batch(
+                            texts=texts,
+                            per_review_top_n=KEYWORDS_PER_REVIEW,
+                            overall_top_n=KEYWORDS_OVERALL,
+                        )
+                    except Exception as exc:
+                        st.warning(f"Keyword extraction failed: {exc}")
+                        keyword_res = {"per_review": [[]], "overall": []}
+
+            with st.spinner("Running emotion analysis..."):
+                va_by_review = [predict_va_single(text)]
+                va_overall = summarize_va(va_by_review)
+                discrete_overall = emotion_percentages(texts, method="prob")
+                discrete_by_review = [predict_proba_single(text)]
+
+            review_rows = [
+                {
+                    "id": "manual_1",
+                    "title": "Review 1",
+                    "content": text,
+                    "rating": None,
+                    "date": "",
+                    "platform": "Manual Input",
+                    "reviewer": "",
                 }
+            ]
 
-            except Exception as e:
-                st.session_state.single_errors.append(f"Error: {e}")
+            st.session_state.single_result = {
+                "analysis": {
+                    "topic": topic_res,
+                    "topic_summary": topic_summary_text,
+                    "keywords": keyword_res,
+                    "sentiment": sentiments,
+                    "emotion": {
+                        "va": va_overall,
+                        "discrete": discrete_overall,
+                    },
+                    "emotion_by_review": {
+                        "va": va_by_review,
+                        "discrete": discrete_by_review,
+                    },
+                    "reviews": review_rows,
+                },
+            }
+
+        except Exception as exc:
+            st.session_state.single_errors.append(f"Error: {exc}")
 
 for msg in st.session_state.single_errors:
     st.warning(msg)
 
 if st.session_state.single_result:
     res = st.session_state.single_result
-    st.markdown("## Results")
-    st.write(f"**Cluster:** {res['cluster']}")
-
-    st.subheader("Sentiment")
-    st.write(f"**Sentiment:** {res['sentiment']['label']}")
-    st.write(f"**Confidence:** {res['sentiment']['confidence']:.3f}")
-    st.progress(max(0.0, min(1.0, float(res["sentiment"]["confidence"]))))
-
-    st.subheader("Emotion")
-    dist = res.get("emotion") or {}
-    if dist:
-        top_items = sorted(((k, float(v)) for k, v in dist.items()), key=lambda kv: -kv[1])[:10]
-        df = pd.DataFrame(top_items, columns=["emotion", "score"])
-        st.bar_chart(df, x="emotion", y="score", use_container_width=True)
-
-    st.subheader("Topic")
-    topic = res["topic"]
-    if topic["is_outlier"]:
-        st.write("**Topic:** Unassigned / Misc (outlier)")
-    else:
-        st.write(f"**Topic ID:** {topic['topic_id']}")
-        if topic["keywords"]:
-            st.write("**Keywords:** " + ", ".join(topic["keywords"]))
-        if topic["confidence"] is not None:
-            st.write(f"**Topic confidence:** {topic['confidence']:.3f}")
-
-    st.write("**LLM topic label / explanation:**")
-    st.write(res["topic_llm"]["label"])
-    if res["topic_llm"].get("explanation"):
-        st.write(res["topic_llm"]["explanation"])
+    render_analysis_results(
+        res["analysis"],
+        show_overall=False,
+        show_per_review=True,
+        show_topic_assignment=False,
+        show_section_heading=False,
+        show_topic_title_before_keywords=True,
+        show_review_preview=False,
+    )
