@@ -642,10 +642,18 @@ with left_panel:
                         st.warning("Selected result not found. Please pick a result and submit again.")
                         st.session_state.search3_submit_clicked = False
                     else:
-                        st.session_state.search3_confirmed_company = {**selected, "source": "selection"}
-                        st.session_state.search3_submit_clicked = True
-                        st.session_state.search3_preview_analysis = None
-                        st.session_state.search3_review_carousel_start = 0
+                        if selected.get("platform") == "Google Play Store" and not selected.get("package"):
+                            st.warning(
+                                "This Google Play result is missing a package ID, so reviews cannot be fetched. "
+                                "Please pick another result or paste the direct app link."
+                            )
+                            st.session_state.search3_submit_clicked = False
+                            st.session_state.search3_confirmed_company = None
+                        else:
+                            st.session_state.search3_confirmed_company = {**selected, "source": "selection"}
+                            st.session_state.search3_submit_clicked = True
+                            st.session_state.search3_preview_analysis = None
+                            st.session_state.search3_review_carousel_start = 0
                 else:
                     confirmed, parse_errors = parse_pasted_link(
                         st.session_state.get("search3_platform"),

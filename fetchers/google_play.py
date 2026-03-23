@@ -30,6 +30,17 @@ def _is_valid_package(package: str) -> bool:
     return bool(package and PACKAGE_RE.fullmatch(package.strip()))
 
 
+def _iter_nested_values(obj):
+    if isinstance(obj, dict):
+        for v in obj.values():
+            yield v
+            yield from _iter_nested_values(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield v
+            yield from _iter_nested_values(v)
+
+
 def _extract_package_from_search_hit(hit: Dict[str, Any]) -> Optional[str]:
     for key in ("appId", "app_id", "package", "packageName"):
         value = hit.get(key)
@@ -44,6 +55,71 @@ def _extract_package_from_search_hit(hit: Dict[str, Any]) -> Optional[str]:
         if pkg and _is_valid_package(pkg):
             return pkg
 
+    # Deep scan nested strings in case appId/package lives in nested payload.
+    for value in _iter_nested_values(hit):
+        if not isinstance(value, str):
+            continue
+        s = value.strip()
+        if not s:
+            continue
+
+        if _is_valid_package(s):
+            return s
+
+        pkg = extract_package_from_google_play_url(s)
+        if pkg and _is_valid_package(pkg):
+            return pkg
+
+        m = re.search(r"(?:[?&]id=|/details\\?id=)([a-z0-9_]+(?:\\.[a-z0-9_]+)+)", s, re.IGNORECASE)
+        if m:
+            pkg2 = m.group(1)
+            if _is_valid_package(pkg2):
+                return pkg2
+
+    return None
+
+
+def _norm_name(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _resolve_package_by_title_developer(
+    title: str,
+    developer_or_genre: str,
+    country: str,
+    lang: str,
+) -> Optional[str]:
+    """
+    Try to recover missing package IDs for search hits by querying with title/developer
+    and matching near-identical names.
+    """
+    if gp_search is None:
+        return None
+
+    t = str(title or "").strip()
+    d = str(developer_or_genre or "").strip()
+    if not t:
+        return None
+
+    queries = [f"{t} {d}".strip(), t]
+    target_name = _norm_name(t)
+    for q in queries:
+        try:
+            hits = gp_search(q, lang=lang, country=country, n_hits=15)
+        except Exception:
+            continue
+        for h in hits or []:
+            pkg = _extract_package_from_search_hit(h or {})
+            if not pkg:
+                continue
+            cand_name = _norm_name(str(h.get("title") or ""))
+            if target_name and cand_name == target_name:
+                return pkg
+        # relaxed fallback: first valid package from same query
+        for h in hits or []:
+            pkg = _extract_package_from_search_hit(h or {})
+            if pkg:
+                return pkg
     return None
 
 
@@ -87,6 +163,13 @@ def search_google_play(query: str, limit: int = 5, country: str = "us", lang: st
                 title = (h.get("title") or "").strip()
                 subtitle = (h.get("developer") or h.get("genre") or "").strip()
                 pkg = _extract_package_from_search_hit(h or {})
+                if not pkg:
+                    pkg = _resolve_package_by_title_developer(
+                        title=title,
+                        developer_or_genre=subtitle,
+                        country=country,
+                        lang=lang,
+                    )
 
                 if pkg:
                     dedupe_key = ("pkg", pkg.lower())
@@ -187,8 +270,7 @@ def fetch_google_play_reviews(package: str, limit: int = 20, country: str = "us"
                             continue
                         title = r.get("title") or None
                         content = r.get("content") or None
-                        language_hint = r.get("reviewLanguage") or r.get("language") or r.get("lang")
-                        if not is_english_review(title=title, content=content, language_hint=language_hint):
+                        if not is_english_review(title=title, content=content):
                             continue
                         seen_ids.add(rid)
                         out.append(
