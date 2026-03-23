@@ -30,6 +30,7 @@ st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout=
 TOPIC_EXAMPLES_PER_THEME = 2
 KEYWORDS_PER_REVIEW = 5
 KEYWORDS_OVERALL = 20
+DIRECT_LINK_PLATFORMS = {"G2", "Trustpilot"}
 
 st.markdown(
     """
@@ -447,15 +448,6 @@ with divider_panel:
     st.markdown("<div class='vertical-divider'></div>", unsafe_allow_html=True)
 
 with left_panel:
-    st.markdown('<div class="field-title">Search your company name</div>', unsafe_allow_html=True)
-    query = st.text_input(
-        "Search your company name",
-        placeholder="Search",
-        label_visibility="collapsed",
-        key="search3_query_input",
-    )
-
-    st.write("")
     st.markdown('<div class="field-title">What platform?</div>', unsafe_allow_html=True)
     platform = st.radio(
         "What platform?",
@@ -464,6 +456,31 @@ with left_panel:
         label_visibility="collapsed",
         key="search3_platform",
     )
+
+    is_direct_link_mode = platform in DIRECT_LINK_PLATFORMS
+
+    st.write("")
+    if is_direct_link_mode:
+        st.markdown('<div class="field-title">Paste company link</div>', unsafe_allow_html=True)
+        placeholder = (
+            "e.g. https://www.g2.com/products/openai/reviews"
+            if platform == "G2"
+            else "e.g. https://www.trustpilot.com/review/spotify.com"
+        )
+        query = st.text_input(
+            "Paste company link",
+            placeholder=placeholder,
+            label_visibility="collapsed",
+            key="search3_query_input",
+        )
+    else:
+        st.markdown('<div class="field-title">Search your company name</div>', unsafe_allow_html=True)
+        query = st.text_input(
+            "Search your company name",
+            placeholder="Search",
+            label_visibility="collapsed",
+            key="search3_query_input",
+        )
 
     st.write("")
     st.markdown('<div class="field-title">How many reviews?</div>', unsafe_allow_html=True)
@@ -479,7 +496,8 @@ with left_panel:
     )
 
     st.write("")
-    if st.button("Search", type="primary", use_container_width=True):
+    primary_label = "Fetch Reviews" if is_direct_link_mode else "Search"
+    if st.button(primary_label, type="primary", use_container_width=True):
         st.session_state.search3_errors = []
         st.session_state.search3_num_reviews = num_reviews
         st.session_state.search3_submit_clicked = False
@@ -490,8 +508,18 @@ with left_panel:
         st.session_state.search3_review_carousel_start = 0
         st.session_state.search3_pasted_link = ""
 
-        errors = validate_search_inputs(query, platform, num_reviews)
-        st.session_state.search3_errors = errors
+        if is_direct_link_mode:
+            errors = []
+            if not (query and query.strip()):
+                errors.append("Please paste the company link before fetching.")
+            if platform is None:
+                errors.append("Please select a platform before fetching.")
+            if not (isinstance(num_reviews, int) and 1 <= num_reviews <= 100):
+                errors.append("Please enter a number of reviews between 1 and 100.")
+            st.session_state.search3_errors = errors
+        else:
+            errors = validate_search_inputs(query, platform, num_reviews)
+            st.session_state.search3_errors = errors
 
         if st.session_state.search3_errors:
             st.session_state.search3_search_clicked = False
@@ -499,27 +527,58 @@ with left_panel:
             st.session_state.search3_selected_result = None
             st.session_state.search3_none_selected = False
             st.session_state.search3_pasted_link = ""
+            st.session_state.search3_submit_clicked = False
         else:
-            st.session_state.search3_search_clicked = True
-            st.session_state.search3_selected_result = None
-            st.session_state.search3_none_selected = False
-            st.session_state.search3_pasted_link = ""
+            if is_direct_link_mode:
+                confirmed, parse_errors = parse_pasted_link(platform, query)
+                if parse_errors:
+                    st.session_state.search3_errors = parse_errors
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_submit_clicked = False
+                    st.session_state.search3_results = []
+                elif not confirmed:
+                    st.session_state.search3_errors = ["Could not confirm company from the pasted link."]
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_submit_clicked = False
+                    st.session_state.search3_results = []
+                else:
+                    if not confirmed.get("name"):
+                        confirmed_name = (
+                            confirmed.get("g2_slug")
+                            or confirmed.get("tp_slug")
+                            or query.strip()
+                        )
+                        confirmed["name"] = confirmed_name
+                    st.session_state.search3_search_clicked = False
+                    st.session_state.search3_selected_result = None
+                    st.session_state.search3_none_selected = False
+                    st.session_state.search3_pasted_link = query.strip()
+                    st.session_state.search3_results = []
+                    st.session_state.search3_confirmed_company = confirmed
+                    st.session_state.search3_submit_clicked = True
+                    st.session_state.search3_preview_analysis = None
+                    st.session_state.search3_review_carousel_start = 0
+            else:
+                st.session_state.search3_search_clicked = True
+                st.session_state.search3_selected_result = None
+                st.session_state.search3_none_selected = False
+                st.session_state.search3_pasted_link = ""
 
-            candidates = []
-            try:
-                if platform == "Google Play Store":
-                    candidates = search_google_play(query, limit=5)
-                elif platform == "iOS App Store":
-                    candidates = search_ios(query, limit=5)
-                elif platform == "G2":
-                    candidates = search_g2(query, limit=5)
-                elif platform == "Trustpilot":
-                    candidates = search_trustpilot(query, limit=5)
-            except Exception as exc:
-                st.session_state.search3_errors.append(f"Search failed: {exc}")
                 candidates = []
+                try:
+                    if platform == "Google Play Store":
+                        candidates = search_google_play(query, limit=5)
+                    elif platform == "iOS App Store":
+                        candidates = search_ios(query, limit=5)
+                    elif platform == "G2":
+                        candidates = search_g2(query, limit=5)
+                    elif platform == "Trustpilot":
+                        candidates = search_trustpilot(query, limit=5)
+                except Exception as exc:
+                    st.session_state.search3_errors.append(f"Search failed: {exc}")
+                    candidates = []
 
-            st.session_state.search3_results = process_search_results(candidates, platform)
+                st.session_state.search3_results = process_search_results(candidates, platform)
 
     if st.session_state.search3_search_clicked:
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
@@ -628,6 +687,7 @@ with right_panel:
                         limit=fetch_key["limit"],
                     )
                 fetched = filter_english_reviews(fetched or [], limit=None)
+
                 st.session_state.search3_fetched_reviews = fetched
                 st.session_state.search3_fetched_for = fetch_key
                 st.session_state.search3_preview_analysis = None

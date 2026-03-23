@@ -308,8 +308,18 @@ def process_search_results(candidates: list, platform: str) -> list:
     """Convert raw search candidates to UI result format."""
     ui_candidates = []
     for idx, c in enumerate((candidates or [])[:5], start=1):
+        stable_seed = (
+            c.get("package")
+            or c.get("app_id")
+            or c.get("g2_slug")
+            or c.get("tp_slug")
+            or c.get("name")
+            or c.get("title")
+            or f"row-{idx}"
+        )
+        stable_hash = hashlib.sha1(f"{platform}|{stable_seed}|{idx}".encode("utf-8")).hexdigest()[:12]
         ui = {
-            "id": f"s{idx}",
+            "id": f"r_{stable_hash}",
             "platform": platform,
             "name": c.get("name") or c.get("title") or "(unknown)",
             "subtitle": c.get("subtitle") or "",
@@ -317,6 +327,11 @@ def process_search_results(candidates: list, platform: str) -> list:
         }
         if c.get("package"):
             ui["package"] = c.get("package")
+            if platform == "Google Play Store":
+                pkg = str(c.get("package") or "").strip()
+                if pkg:
+                    subtitle = str(ui.get("subtitle") or "").strip()
+                    ui["subtitle"] = f"{subtitle} · {pkg}" if subtitle else pkg
         if c.get("app_id"):
             ui["app_id"] = c.get("app_id")
         if c.get("g2_slug"):
