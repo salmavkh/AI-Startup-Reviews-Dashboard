@@ -388,10 +388,20 @@ def render_analysis_results(
     show_section_heading: bool = True,
     show_topic_title_before_keywords: bool = False,
     show_review_preview: bool = True,
+    compact_top_spacing: bool = False,
 ):
     """Render topic + sentiment analysis results."""
     if show_section_heading:
         st.markdown("---\n### Preview analysis")
+    elif compact_top_spacing:
+        st.markdown(
+            """
+            <style>
+              div[data-testid="stTabs"] { margin-top: -8px; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
     st.markdown(
         """
         <style>

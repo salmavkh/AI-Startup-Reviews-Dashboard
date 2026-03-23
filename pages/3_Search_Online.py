@@ -712,4 +712,8 @@ if analysis:
         analysis = None
 
 if analysis:
-    render_analysis_results(analysis)
+    render_analysis_results(
+        analysis,
+        show_section_heading=False,
+        compact_top_spacing=True,
+    )
