@@ -19,6 +19,7 @@ from umap import UMAP
 TOPIC_MODELS_DIR = "artifacts/bertopic_by_cluster"
 ALL_TOPIC_MODEL_PATH = "artifacts/bertopic_all_n30.model"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+ALL_EMBEDDING_MODEL_PATH = "artifacts/review_embedder_v1"
 
 _CLUSTER_TO_MODEL = {
     "Cluster 1 (AI-Charged Product/Service Providers)": os.path.join(
@@ -44,6 +45,11 @@ def _load_embedder() -> SentenceTransformer:
     return SentenceTransformer(EMBEDDING_MODEL_NAME)
 
 
+@st.cache_resource
+def _load_embedder_all() -> SentenceTransformer:
+    return SentenceTransformer(ALL_EMBEDDING_MODEL_PATH)
+
+
 # =========================================================
 # Load BERTopic model (per cluster, cached)
 # =========================================================
@@ -60,7 +66,7 @@ def load_topic_model(cluster_label: str) -> BERTopic:
 
 @st.cache_resource
 def load_topic_model_all() -> BERTopic:
-    embedder = _load_embedder()
+    embedder = _load_embedder_all()
     return BERTopic.load(ALL_TOPIC_MODEL_PATH, embedding_model=embedder)
 
 
@@ -509,7 +515,7 @@ def discover_topics_batch(
             keywords_by_topic=base.get("keywords_by_topic") or {},
         )
 
-    embedder = _load_embedder()
+    embedder = _load_embedder_all()
 
     n_neighbors = max(2, min(15, len(valid_texts) - 1))
     umap_model = UMAP(
