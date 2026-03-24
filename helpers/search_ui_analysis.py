@@ -688,6 +688,14 @@ def render_analysis_results(
             st.caption("No words available for word cloud.")
             return
 
+        item_count = len(items)
+        if item_count <= 18:
+            width = min(width, 760)
+            height = min(height, 360)
+        elif item_count <= 35:
+            width = min(width, 920)
+            height = min(height, 430)
+
         canvas = Image.new("RGB", (width, height), "#f6f8fb")
         draw = ImageDraw.Draw(canvas)
 
@@ -696,13 +704,23 @@ def render_analysis_results(
 
         def _font_size(value: float) -> int:
             if max_v <= min_v:
-                return 42
+                return 64 if item_count <= 18 else 48
             ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
-            return int(18 + ratio * 150)
+            spread = 220 if item_count <= 20 else 170
+            return int(24 + ratio * spread)
 
         font_env = str(os.getenv("WORDCLOUD_FONT_PATH") or "").strip()
+        mpl_font = ""
+        try:
+            import matplotlib
+
+            mpl_font = os.path.join(matplotlib.get_data_path(), "fonts", "ttf", "DejaVuSans.ttf")
+        except Exception:
+            mpl_font = ""
         font_candidates = [
             font_env,
+            mpl_font,
+            "DejaVuSans.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -737,7 +755,7 @@ def render_analysis_results(
 
         placed: list[tuple[int, int, int, int]] = []
         cx, cy = width // 2, height // 2
-        max_radius = int(min(width, height) * 0.47)
+        max_radius = int(min(width, height) * 0.62)
 
         for idx_item, (word, weight) in enumerate(items):
             base_size = _font_size(float(weight))
@@ -753,12 +771,16 @@ def render_analysis_results(
                 if tw <= 0 or th <= 0:
                     continue
 
-                for attempt in range(450):
-                    spiral = (attempt / 450.0) ** 1.35
-                    radius = int(spiral * max_radius)
-                    angle = rng.random() * 2.0 * math.pi + (idx_item * 0.17)
-                    x = cx + int(radius * math.cos(angle)) - (tw // 2)
-                    y = cy + int(radius * math.sin(angle)) - (th // 2)
+                for attempt in range(700):
+                    if idx_item <= 2 or attempt < 180:
+                        spiral = (attempt / 700.0) ** 0.9
+                        radius = int(spiral * max_radius)
+                        angle = rng.random() * 2.0 * math.pi + (idx_item * 0.17)
+                        x = cx + int(radius * math.cos(angle)) - (tw // 2)
+                        y = cy + int(radius * math.sin(angle)) - (th // 2)
+                    else:
+                        x = rng.randint(8, max(8, width - tw - 8))
+                        y = rng.randint(8, max(8, height - th - 8))
                     rect = (x, y, x + tw, y + th)
 
                     if rect[0] < 8 or rect[1] < 8 or rect[2] > (width - 8) or rect[3] > (height - 8):
@@ -774,7 +796,21 @@ def render_analysis_results(
                 if rendered:
                     break
 
-        st.image(canvas, use_container_width=True)
+        if placed:
+            x0 = min(r[0] for r in placed)
+            y0 = min(r[1] for r in placed)
+            x1 = max(r[2] for r in placed)
+            y1 = max(r[3] for r in placed)
+            pad = 24
+            crop_box = (
+                max(0, x0 - pad),
+                max(0, y0 - pad),
+                min(width, x1 + pad),
+                min(height, y1 + pad),
+            )
+            canvas = canvas.crop(crop_box)
+
+        st.image(canvas, width=min(920, canvas.width))
 
     def _render_topic_wordcloud_from_top_words(raw_rows: list | None, key_prefix: str):
         weights = _build_topic_word_weights(raw_rows)
