@@ -2,12 +2,33 @@ from __future__ import annotations
 from typing import Dict, Any, List
 import os
 import json
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from groq import Groq
 
 load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+
+def _read_groq_api_key() -> str:
+    key = str(os.getenv("GROQ_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        import streamlit as st
+
+        key = str(st.secrets.get("GROQ_API_KEY") or "").strip()
+    except Exception:
+        key = ""
+    return key
+
+
+@lru_cache(maxsize=1)
+def _get_client() -> Groq | None:
+    key = _read_groq_api_key()
+    if not key:
+        return None
+    return Groq(api_key=key)
 
 def llm_topic_summary(cluster_label: str, top_topics: List[Dict[str, Any]]) -> str:
     """
@@ -62,6 +83,9 @@ Data (JSON):
 
 Write the summary now.
 """.strip()
+    client = _get_client()
+    if client is None:
+        return "Overview: GROQ_API_KEY is not configured. Topics: keyword summaries are unavailable."
 
     resp = client.chat.completions.create(
         model="llama-3.1-8b-instant",

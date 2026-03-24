@@ -3,11 +3,32 @@ from typing import Dict, Any, List, Optional
 import os
 import json
 import re
+from functools import lru_cache
 from dotenv import load_dotenv
 from groq import Groq
 
 load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+
+def _read_groq_api_key() -> str:
+    key = str(os.getenv("GROQ_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        import streamlit as st
+
+        key = str(st.secrets.get("GROQ_API_KEY") or "").strip()
+    except Exception:
+        key = ""
+    return key
+
+
+@lru_cache(maxsize=1)
+def _get_client() -> Optional[Groq]:
+    key = _read_groq_api_key()
+    if not key:
+        return None
+    return Groq(api_key=key)
 
 
 def _parse_json_label_payload(raw_text: str) -> Optional[Dict[str, str]]:
@@ -97,6 +118,12 @@ Do NOT invent product features or facts.
 
 Return JSON with keys: label, explanation.
 """
+    client = _get_client()
+    if client is None:
+        return {
+            "label": _fallback_label_from_keywords(keywords),
+            "explanation": "GROQ_API_KEY is not configured, so this label is keyword-based.",
+        }
 
     resp = client.chat.completions.create(
         model="llama-3.1-8b-instant",
@@ -168,6 +195,10 @@ Task:
 Return JSON with key: label
 """
     try:
+        client = _get_client()
+        if client is None:
+            return _fallback_label_from_keywords(clean_keywords)
+
         resp = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[{"role": "user", "content": prompt}],
