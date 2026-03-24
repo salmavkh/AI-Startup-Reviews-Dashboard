@@ -2,8 +2,10 @@ import streamlit as st
 
 from helpers.review_analysis_pipeline import run_review_analysis
 from helpers.search_ui_helpers import render_analysis_results
+from helpers.sidebar_nav import render_sidebar_nav
 
-st.set_page_config(page_title="Analyze a Single Review", page_icon="📝", layout="wide")
+st.set_page_config(page_title="Analyze Single Review", page_icon="📝", layout="wide")
+render_sidebar_nav()
 
 TOPIC_EXAMPLES_PER_THEME = 2
 KEYWORDS_PER_REVIEW = 5
@@ -52,7 +54,7 @@ st.markdown(
 if st.button("← Back"):
     st.switch_page("app.py")
 
-st.header("Analyze a Single Review")
+st.header("Analyze Single Review")
 
 if "single_errors" not in st.session_state:
     st.session_state.single_errors = []

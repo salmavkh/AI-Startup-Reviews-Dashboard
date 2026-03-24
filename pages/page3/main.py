@@ -10,6 +10,7 @@ from helpers.search_ui_helpers import (
     fetch_reviews_for_ui,
     render_analysis_results,
 )
+from helpers.sidebar_nav import render_sidebar_nav
 from pages.page3.analysis import is_analysis_stale, run_page_analysis
 from pages.page3.components import render_option_card
 from pages.page3.constants import DIRECT_LINK_PLATFORMS, PAGE_CSS
@@ -236,6 +237,7 @@ def _render_analysis() -> None:
 
 def render_page() -> None:
     st.set_page_config(page_title="Search Online Reviews", page_icon="🔎", layout="wide")
+    render_sidebar_nav()
     st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
     if st.button("← Back"):

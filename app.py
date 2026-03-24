@@ -2,15 +2,18 @@
 
 import streamlit as st
 from dotenv import load_dotenv
+from helpers.sidebar_nav import render_sidebar_nav
 
 # Load environment variables from .env (restart required after editing .env)
 load_dotenv()
 
 st.set_page_config(
-    page_title="AI Review Insights",
+    page_title="Home",
     page_icon="🧠",
     layout="wide",
 )
+
+render_sidebar_nav()
 
 st.markdown(
     """
@@ -175,16 +178,16 @@ with st.container():
         btn1, btn2, btn3 = st.columns(3, gap="small")
 
         with btn1:
-            if st.button("Analyze a Single Review", type="secondary", use_container_width=True):
-                st.switch_page("pages/1_Analyze_Single.py")
+            if st.button("Analyze Single Review", type="secondary", use_container_width=True):
+                st.switch_page("pages/1_Analyze_Single_Review.py")
 
         with btn2:
             if st.button("Analyze Multiple Reviews", type="secondary", use_container_width=True):
-                st.switch_page("pages/2_Analyze_Multiple.py")
+                st.switch_page("pages/2_Analyze_Multiple_Reviews.py")
 
         with btn3:
             if st.button("Search Online Reviews", type="primary", use_container_width=True):
-                st.switch_page("pages/3_Search_Online.py")
+                st.switch_page("pages/3_Search_Online_Reviews.py")
 
 with st.container():
     st.markdown('<div class="content-anchor"></div>', unsafe_allow_html=True)

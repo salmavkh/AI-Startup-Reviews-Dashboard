@@ -3,8 +3,10 @@ import streamlit as st
 
 from helpers.review_analysis_pipeline import run_review_analysis
 from helpers.search_ui_helpers import render_analysis_results
+from helpers.sidebar_nav import render_sidebar_nav
 
 st.set_page_config(page_title="Analyze Multiple Reviews", page_icon="📄", layout="wide")
+render_sidebar_nav()
 
 TOPIC_EXAMPLES_PER_THEME = 2
 KEYWORDS_PER_REVIEW = 5
