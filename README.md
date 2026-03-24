@@ -1,4 +1,4 @@
-# AI Review Insights Dashboard
+# AI Startup Review Insights Dashboard
 
 A Streamlit dashboard for analyzing AI startup reviews across sentiment, emotion, and topics.
 - **Sentiment**: Positive / Negative (with confidence)
