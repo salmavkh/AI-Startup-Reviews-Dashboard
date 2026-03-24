@@ -15,6 +15,7 @@ from helpers.search_ui_common import (
     hashlib,
     html,
     math,
+    os,
     pd,
     random,
     re,
@@ -699,12 +700,19 @@ def render_analysis_results(
             ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
             return int(18 + ratio * 150)
 
+        font_env = str(os.getenv("WORDCLOUD_FONT_PATH") or "").strip()
         font_candidates = [
+            font_env,
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
             "/System/Library/Fonts/Supplemental/Helvetica.ttc",
             "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
         ]
+        font_candidates = [p for p in font_candidates if p]
         font_cache: dict[int, object] = {}
 
         def _get_font(size: int):
@@ -1444,11 +1452,11 @@ def render_analysis_results(
                                 ],
                             )
                             .add_params(pick)
-                            .properties(height=320)
+                            .properties(width=700, height=320)
                         )
                         event = st.altair_chart(
                             points_chart,
-                            use_container_width=True,
+                            use_container_width=False,
                             on_select="rerun",
                             selection_mode=["review_pick"],
                             key="search3_va_overall_scatter",
@@ -2015,10 +2023,10 @@ def render_analysis_results(
                                 )
                             )
 
-                            chart = (hline + vline + lines + emotion_points + review_point + top10_labels).properties(
-                                height=300
-                            )
-                            st.altair_chart(chart, use_container_width=True)
+                            chart = (
+                                hline + vline + lines + emotion_points + review_point + top10_labels
+                            ).properties(width=700, height=300)
+                            st.altair_chart(chart, use_container_width=False)
                         else:
                             scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
                             st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
