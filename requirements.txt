@@ -1,0 +1,16 @@
+streamlit
+pandas
+torch
+transformers
+safetensors
+bertopic
+python-dotenv
+groq
+sentence-transformers
+keybert
+langdetect
+apify-client
+google-play-scraper
+beautifulsoup4
+requests
+huggingface_hub
