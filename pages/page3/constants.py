@@ -134,16 +134,8 @@ PAGE_CSS = """
   .vertical-divider {
     width: 1px;
     background: #d9d9d9;
-    min-height: 320px;
-    height: 100%;
+    min-height: 980px;
     margin: 0 auto;
-  }
-
-  div[data-testid="stExpander"] [data-testid="stImage"] img {
-    max-width: 920px !important;
-    margin-left: auto;
-    margin-right: auto;
-    display: block;
   }
 
   div[data-testid="stButton"] button[kind="primary"] {
