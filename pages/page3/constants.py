@@ -139,12 +139,6 @@ PAGE_CSS = """
     margin: 0 auto;
   }
 
-  div[data-testid="stExpander"] .vega-embed {
-    max-width: 760px !important;
-    margin-left: auto;
-    margin-right: auto;
-  }
-
   div[data-testid="stExpander"] [data-testid="stImage"] img {
     max-width: 920px !important;
     margin-left: auto;
