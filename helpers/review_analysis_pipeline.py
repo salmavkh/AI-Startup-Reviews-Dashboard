@@ -6,7 +6,7 @@ import json
 import streamlit as st
 
 from helpers.topic_summary import topic_summary_or_empty
-from inference.emotion import emotion_percentages, predict_proba_single
+from inference.emotion import predict_proba_single
 from inference.topic.keywords import extract_keywords_batch
 from inference.topic.llm_label import llm_label_topics_from_keywords
 from inference.sentiment import predict_single as predict_sentiment_single
@@ -14,6 +14,33 @@ from inference.topic import discover_topics_batch
 from inference.emotion.va import predict_va_single, summarize_va
 
 GENERAL_CLUSTER_LABEL = "General online review feedback"
+
+
+def _average_discrete_emotion_probs(
+    texts: list[str],
+    per_review_probs: list[dict[str, float]],
+) -> dict:
+    valid_indices = [
+        i for i, t in enumerate(texts or [])
+        if str(t or "").strip() and i < len(per_review_probs)
+    ]
+    if not valid_indices:
+        return {"method": "prob", "total": 0, "percentages": {}, "counts": None}
+
+    summed: dict[str, float] = {}
+    for idx in valid_indices:
+        dist = per_review_probs[idx] or {}
+        for label, prob in dist.items():
+            try:
+                p = float(prob)
+            except Exception:
+                continue
+            summed[str(label)] = summed.get(str(label), 0.0) + p
+
+    total = len(valid_indices)
+    avg = {label: score / total for label, score in summed.items()}
+    percentages = dict(sorted(avg.items(), key=lambda kv: -kv[1]))
+    return {"method": "prob", "total": total, "percentages": percentages, "counts": None}
 
 
 def reviews_signature(rows: list[dict] | None) -> str:
@@ -107,8 +134,8 @@ def run_review_analysis(
     with st.spinner("Running emotion analysis..."):
         va_by_review = [predict_va_single(t or "") for t in texts]
         va_overall = summarize_va(va_by_review)
-        discrete_overall = emotion_percentages(texts, method="prob")
         discrete_by_review = [predict_proba_single(t or "") for t in texts]
+        discrete_overall = _average_discrete_emotion_probs(texts, discrete_by_review)
 
     result = {
         "cluster_label": cluster_label,
