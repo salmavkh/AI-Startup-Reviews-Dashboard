@@ -15,6 +15,7 @@ from helpers.search_ui_common import (
     hashlib,
     html,
     math,
+    os,
     pd,
     random,
     re,
@@ -695,20 +696,27 @@ def render_analysis_results(
 
         def _font_size(value: float) -> int:
             if max_v <= min_v:
-                return 52
+                return 72
             ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
-            return int(18 + ratio * 150)
+            return int(28 + ratio * 210)
 
+        font_env = str(os.getenv("WORDCLOUD_FONT_PATH") or "").strip()
         font_candidates = [
+            font_env,
+            "DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
             "/System/Library/Fonts/Supplemental/Helvetica.ttc",
             "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
         ]
+        font_candidates = [p for p in font_candidates if p]
         font_cache: dict[int, object] = {}
 
         def _get_font(size: int):
-            key = max(10, int(size))
+            key = max(14, int(size))
             if key in font_cache:
                 return font_cache[key]
             for path in font_candidates:
@@ -776,6 +784,39 @@ def render_analysis_results(
                     break
                 if rendered:
                     break
+
+        if placed:
+            x0 = min(r[0] for r in placed)
+            y0 = min(r[1] for r in placed)
+            x1 = max(r[2] for r in placed)
+            y1 = max(r[3] for r in placed)
+            pad = 18
+            crop = canvas.crop(
+                (
+                    max(0, x0 - pad),
+                    max(0, y0 - pad),
+                    min(width, x1 + pad),
+                    min(height, y1 + pad),
+                )
+            )
+
+            # Enlarge rendered cloud to better fill the display box.
+            if crop.width > 0 and crop.height > 0:
+                scale = min(width / crop.width, height / crop.height)
+                if scale > 1.05:
+                    resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", None)
+                    if resampling is None:
+                        resampling = getattr(Image, "LANCZOS", getattr(Image, "BICUBIC", 3))
+                    crop = crop.resize(
+                        (max(1, int(crop.width * scale)), max(1, int(crop.height * scale))),
+                        resampling,
+                    )
+
+            framed = Image.new("RGB", (width, height), "#f6f8fb")
+            px = max(0, (width - crop.width) // 2)
+            py = max(0, (height - crop.height) // 2)
+            framed.paste(crop, (px, py))
+            canvas = framed
 
         st.image(canvas, use_container_width=True)
 
