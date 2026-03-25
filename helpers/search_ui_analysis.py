@@ -695,10 +695,13 @@ def render_analysis_results(
         min_v, max_v = min(vals), max(vals)
 
         def _font_size(value: float) -> int:
+            few_words = len(items) <= 12
             if max_v <= min_v:
-                return 72
+                return 110 if few_words else 72
             ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
-            return int(28 + ratio * 210)
+            min_size = 44 if few_words else 30
+            spread = 260 if few_words else 210
+            return int(min_size + ratio * spread)
 
         font_env = str(os.getenv("WORDCLOUD_FONT_PATH") or "").strip()
         font_candidates = [
@@ -738,7 +741,10 @@ def render_analysis_results(
         placed: list[tuple[int, int, int, int]] = []
         cx, cy = width // 2, height // 2
         max_radius = int(min(width, height) * 0.65)
-        slot_count = max(1, min(8, len(items)))
+        if len(items) <= 12:
+            slot_count = max(1, min(4, len(items)))
+        else:
+            slot_count = max(1, min(8, len(items)))
 
         for idx_item, (word, weight) in enumerate(items):
             base_size = _font_size(float(weight))
@@ -757,8 +763,12 @@ def render_analysis_results(
                 for attempt in range(520):
                     if idx_item < slot_count and attempt < 220:
                         slot_x = int(((idx_item % slot_count) + 1) * width / (slot_count + 1))
-                        jitter_x = rng.randint(-(width // 14), width // 14)
-                        jitter_y = rng.randint(-(height // 3), height // 3)
+                        if len(items) <= 12:
+                            jitter_x = rng.randint(-(width // 24), width // 24)
+                            jitter_y = rng.randint(-(height // 5), height // 5)
+                        else:
+                            jitter_x = rng.randint(-(width // 14), width // 14)
+                            jitter_y = rng.randint(-(height // 3), height // 3)
                         x = slot_x + jitter_x - (tw // 2)
                         y = cy + jitter_y - (th // 2)
                     elif attempt < 380:
@@ -802,7 +812,9 @@ def render_analysis_results(
 
             # Enlarge rendered cloud to better fill the display box.
             if crop.width > 0 and crop.height > 0:
-                scale = min(width / crop.width, height / crop.height)
+                target_w = int(width * 0.92)
+                target_h = int(height * 0.78)
+                scale = min(target_w / crop.width, target_h / crop.height)
                 if scale > 1.05:
                     resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", None)
                     if resampling is None:
