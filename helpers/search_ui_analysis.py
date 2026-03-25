@@ -1461,8 +1461,18 @@ def render_analysis_results(
                             alt.Chart(df_va)
                             .mark_circle()
                             .encode(
-                                x=alt.X("valence:Q", scale=alt.Scale(domain=[-1, 1]), title="Valence"),
-                                y=alt.Y("arousal:Q", scale=alt.Scale(domain=[-1, 1]), title="Arousal"),
+                                x=alt.X(
+                                    "valence:Q",
+                                    scale=alt.Scale(domain=[-1, 1]),
+                                    title="Valence",
+                                    axis=alt.Axis(tickCount=9),
+                                ),
+                                y=alt.Y(
+                                    "arousal:Q",
+                                    scale=alt.Scale(domain=[-1, 1]),
+                                    title="Arousal",
+                                    axis=alt.Axis(tickCount=9),
+                                ),
                                 color=alt.Color(
                                     "color_key:N",
                                     title="Quadrant",
@@ -1508,11 +1518,11 @@ def render_analysis_results(
                                 ],
                             )
                             .add_params(pick)
-                            .properties(height=320)
+                            .properties(width="container", height=360)
                         )
                         event = st.altair_chart(
                             points_chart,
-                            use_container_width=True,
+                            use_container_width=False,
                             on_select="rerun",
                             selection_mode=["review_pick"],
                             key="search3_va_overall_scatter",
@@ -2004,8 +2014,18 @@ def render_analysis_results(
                                 alt.Chart(df_e)
                                 .mark_rule(strokeWidth=1.3)
                                 .encode(
-                                    x=alt.X("review_valence:Q", scale=alt.Scale(domain=[-1, 1]), title="Valence"),
-                                    y=alt.Y("review_arousal:Q", scale=alt.Scale(domain=[-1, 1]), title="Arousal"),
+                                    x=alt.X(
+                                        "review_valence:Q",
+                                        scale=alt.Scale(domain=[-1, 1]),
+                                        title="Valence",
+                                        axis=alt.Axis(tickCount=9),
+                                    ),
+                                    y=alt.Y(
+                                        "review_arousal:Q",
+                                        scale=alt.Scale(domain=[-1, 1]),
+                                        title="Arousal",
+                                        axis=alt.Axis(tickCount=9),
+                                    ),
                                     x2="emotion_valence:Q",
                                     y2="emotion_arousal:Q",
                                     color=alt.condition(
@@ -2080,9 +2100,9 @@ def render_analysis_results(
                             )
 
                             chart = (hline + vline + lines + emotion_points + review_point + top10_labels).properties(
-                                height=300
+                                width="container", height=420
                             )
-                            st.altair_chart(chart, use_container_width=True)
+                            st.altair_chart(chart, use_container_width=False)
                         else:
                             scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
                             st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
