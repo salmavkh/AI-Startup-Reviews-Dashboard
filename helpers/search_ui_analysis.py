@@ -695,7 +695,7 @@ def render_analysis_results(
 
         def _font_size(value: float) -> int:
             if max_v <= min_v:
-                return 42
+                return 52
             ratio = (float(value) - min_v) / max(1e-9, (max_v - min_v))
             return int(18 + ratio * 150)
 
@@ -729,7 +729,8 @@ def render_analysis_results(
 
         placed: list[tuple[int, int, int, int]] = []
         cx, cy = width // 2, height // 2
-        max_radius = int(min(width, height) * 0.47)
+        max_radius = int(min(width, height) * 0.65)
+        slot_count = max(1, min(8, len(items)))
 
         for idx_item, (word, weight) in enumerate(items):
             base_size = _font_size(float(weight))
@@ -745,12 +746,22 @@ def render_analysis_results(
                 if tw <= 0 or th <= 0:
                     continue
 
-                for attempt in range(450):
-                    spiral = (attempt / 450.0) ** 1.35
-                    radius = int(spiral * max_radius)
-                    angle = rng.random() * 2.0 * math.pi + (idx_item * 0.17)
-                    x = cx + int(radius * math.cos(angle)) - (tw // 2)
-                    y = cy + int(radius * math.sin(angle)) - (th // 2)
+                for attempt in range(520):
+                    if idx_item < slot_count and attempt < 220:
+                        slot_x = int(((idx_item % slot_count) + 1) * width / (slot_count + 1))
+                        jitter_x = rng.randint(-(width // 14), width // 14)
+                        jitter_y = rng.randint(-(height // 3), height // 3)
+                        x = slot_x + jitter_x - (tw // 2)
+                        y = cy + jitter_y - (th // 2)
+                    elif attempt < 380:
+                        x = rng.randint(8, max(8, width - tw - 8))
+                        y = rng.randint(8, max(8, height - th - 8))
+                    else:
+                        spiral = ((attempt - 380) / 140.0) ** 1.2
+                        radius = int(spiral * max_radius)
+                        angle = rng.random() * 2.0 * math.pi + (idx_item * 0.17)
+                        x = cx + int(radius * math.cos(angle)) - (tw // 2)
+                        y = cy + int(radius * math.sin(angle)) - (th // 2)
                     rect = (x, y, x + tw, y + th)
 
                     if rect[0] < 8 or rect[1] < 8 or rect[2] > (width - 8) or rect[3] > (height - 8):
@@ -776,7 +787,7 @@ def render_analysis_results(
         _render_weighted_wordcloud(
             weights,
             key_prefix=key_prefix,
-            width=1200,
+            width=1600,
             height=560,
             max_words=120,
         )
@@ -2240,7 +2251,7 @@ def render_analysis_results(
                     _render_weighted_wordcloud(
                         keyword_weights,
                         key_prefix=f"per_review_keywords_{idx}",
-                        width=1000,
+                        width=1400,
                         height=360,
                         max_words=50,
                     )
