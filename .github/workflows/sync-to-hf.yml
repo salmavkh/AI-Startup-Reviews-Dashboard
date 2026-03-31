@@ -32,21 +32,24 @@ jobs:
             echo "::error::Could not authenticate to Hugging Face Space. Verify HF_TOKEN is valid and has write access."
             exit 1
           fi
-          # HF Spaces rejects PDF binaries unless stored via Xet/LFS.
-          # Build a temporary mirror commit that excludes tracked PDFs.
+          # HF may reject binary files present anywhere in pushed history.
+          # Build a clean, single-commit snapshot for HF (no Git history), then
+          # remove PDFs from that snapshot before force-pushing.
           tmp_dir="$(mktemp -d)"
-          git worktree add --detach "${tmp_dir}" HEAD
+          git archive --format=tar HEAD | tar -xf - -C "${tmp_dir}"
           cd "${tmp_dir}"
 
-          while IFS= read -r -d '' pdf_file; do
-            rm -f "${pdf_file}"
-          done < <(git ls-files -z '*.pdf')
+          if find . -type f -name '*.pdf' | grep -q .; then
+            echo "Removing PDFs from HF snapshot:"
+            find . -type f -name '*.pdf' -print -delete
+          fi
 
+          git init
+          git checkout -b main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Sync to HF Space (exclude unsupported binary files)"
-          fi
+          git commit -m "Sync to HF Space snapshot (exclude unsupported binary files)"
 
-          git push --force "${HUB_URL}" HEAD:main
+          git remote add hf "${HUB_URL}"
+          git push --force hf main:main
