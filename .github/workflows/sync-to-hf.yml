@@ -32,13 +32,15 @@ jobs:
             echo "::error::Could not authenticate to Hugging Face Space. Verify HF_TOKEN is valid and has write access."
             exit 1
           fi
-          # HF Spaces rejects some binary files unless stored via Xet/LFS.
-          # Build a temporary mirror commit that excludes known unsupported PDFs.
+          # HF Spaces rejects PDF binaries unless stored via Xet/LFS.
+          # Build a temporary mirror commit that excludes tracked PDFs.
           tmp_dir="$(mktemp -d)"
           git worktree add --detach "${tmp_dir}" HEAD
           cd "${tmp_dir}"
 
-          rm -f dataset/NRC-VAD-Lexicon-v2.1/*.pdf
+          while IFS= read -r -d '' pdf_file; do
+            rm -f "${pdf_file}"
+          done < <(git ls-files -z '*.pdf')
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
