@@ -22,10 +22,16 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          if [ -z "${HF_TOKEN}" ]; then
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
             echo "::error::HF_TOKEN is missing. Add it in GitHub repo Settings > Secrets and variables > Actions."
             exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git push https://salmavkh:${HF_TOKEN}@huggingface.co/spaces/salmavkh/AI-Startup-Reviews HEAD:main
+          HUB_URL="https://salmavkh:${HF_TOKEN}@huggingface.co/spaces/salmavkh/AI-Startup-Reviews"
+          if ! git ls-remote "${HUB_URL}" >/dev/null 2>&1; then
+            echo "::error::Could not authenticate to Hugging Face Space. Verify HF_TOKEN is valid and has write access."
+            exit 1
+          fi
+          git push --force "${HUB_URL}" HEAD:main
