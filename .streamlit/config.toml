@@ -1,4 +1,6 @@
 [server]
-address = "0.0.0.0"
-port = 7860
-headless = true
+# Local development defaults.
+# Hugging Face deployment uses Docker CMD flags that override these values.
+address = "localhost"
+port = 8501
+headless = false
