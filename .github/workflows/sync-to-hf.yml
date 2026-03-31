@@ -27,11 +27,24 @@ jobs:
             echo "::error::HF_TOKEN is missing. Add it in GitHub repo Settings > Secrets and variables > Actions."
             exit 1
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           HUB_URL="https://salmavkh:${HF_TOKEN}@huggingface.co/spaces/salmavkh/AI-Startup-Reviews"
           if ! git ls-remote "${HUB_URL}" >/dev/null 2>&1; then
             echo "::error::Could not authenticate to Hugging Face Space. Verify HF_TOKEN is valid and has write access."
             exit 1
           fi
+          # HF Spaces rejects some binary files unless stored via Xet/LFS.
+          # Build a temporary mirror commit that excludes known unsupported PDFs.
+          tmp_dir="$(mktemp -d)"
+          git worktree add --detach "${tmp_dir}" HEAD
+          cd "${tmp_dir}"
+
+          rm -f dataset/NRC-VAD-Lexicon-v2.1/*.pdf
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Sync to HF Space (exclude unsupported binary files)"
+          fi
+
           git push --force "${HUB_URL}" HEAD:main
