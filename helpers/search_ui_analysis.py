@@ -1522,7 +1522,7 @@ def render_analysis_results(
                         )
                         event = st.altair_chart(
                             points_chart,
-                            use_container_width=False,
+                            use_container_width=True,
                             on_select="rerun",
                             selection_mode=["review_pick"],
                             key="search3_va_overall_scatter",
@@ -2102,7 +2102,7 @@ def render_analysis_results(
                             chart = (hline + vline + lines + emotion_points + review_point + top10_labels).properties(
                                 width="container", height=420
                             )
-                            st.altair_chart(chart, use_container_width=False)
+                            st.altair_chart(chart, use_container_width=True)
                         else:
                             scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
                             st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
