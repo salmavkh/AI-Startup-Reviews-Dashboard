@@ -1,5 +1,6 @@
 """Analysis renderer extracted from search UI helpers."""
 
+from inference.topic.llm_summary import llm_review_keyword_summary
 from helpers.search_ui_common import (
     Image,
     ImageDraw,
@@ -2244,6 +2245,7 @@ def render_analysis_results(
 
             # Topic details (after emotion, before keywords)
             topic_id = None
+            topic_name_for_review = ""
             try:
                 if isinstance(topics_per_review, list) and idx < len(topics_per_review):
                     topic_id = int(topics_per_review[idx])
@@ -2293,6 +2295,7 @@ def render_analysis_results(
                         or topic_labels_by_topic.get(str(topic_id))
                         or ""
                     ).strip() or f"Topic {topic_id}"
+                    topic_name_for_review = topic_name
                     raw_topic_words = (
                         topic_keywords_by_topic.get(topic_id, [])
                         if isinstance(topic_keywords_by_topic, dict)
@@ -2317,6 +2320,7 @@ def render_analysis_results(
                     topic_word_pills = "<span class='topic-keyword-pill'>No topic words</span>"
 
                 st.markdown("**Topic Assignment**")
+                st.caption("Each review is mapped to one of the themes found in the full dataset")
                 st.markdown(
                     "<div class='topic-assign-card'>"
                     "<div class='topic-assign-row'>"
@@ -2325,7 +2329,6 @@ def render_analysis_results(
                     f"<span class='topic-chip topic-chip-metric'>{html.escape(conf_text)}</span>"
                     "</div>"
                     f"<div class='topic-keyword-wrap'>{topic_word_pills}</div>"
-                    "<div class='topic-assign-foot'>Assigned from overall topic model.</div>"
                     "</div>",
                     unsafe_allow_html=True,
                 )
@@ -2381,6 +2384,24 @@ def render_analysis_results(
                         max_words=50,
                     )
                 st.dataframe(pd.DataFrame(review_keyword_rows), hide_index=True, use_container_width=True)
+                st.caption(
+                    "This score indicates keyword relevance for this review, where higher values mean the term "
+                    "better reflects the review’s main content. It is used for ranking keywords within the same "
+                    "review, not for sentiment or confidence."
+                )
+                with st.spinner("Generating LLM summary from keywords..."):
+                    review_keyword_summary = llm_review_keyword_summary(
+                        topic_name=topic_name_for_review,
+                        keyword_rows=review_keyword_rows,
+                    )
+                if review_keyword_summary:
+                    st.markdown("**LLM Summary (from keywords)**")
+                    st.markdown(
+                        f"<div style='color:#111111;font-size:16px;line-height:1.45;'>"
+                        f"{html.escape(str(review_keyword_summary))}"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
 
     if overall_placeholder is not None:
         overall_placeholder.empty()
