@@ -278,6 +278,11 @@ def render_analysis_results(
 
     has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
     has_va = bool(reviews and len(per_review_va) == len(reviews))
+    is_hf_space = bool(os.getenv("SPACE_ID"))
+    va_overall_chart_height = 300 if is_hf_space else 360
+    va_per_review_chart_height = 340 if is_hf_space else 420
+    explain_expanded_default = not is_hf_space
+    breakdown_expanded_default = not is_hf_space
 
     keyword_payload = analysis.get("keywords") or {}
     if isinstance(keyword_payload, dict):
@@ -1375,7 +1380,7 @@ def render_analysis_results(
                         title_text="Top emotion (model)",
                     )
 
-                with st.expander("See how we calculate the emotion", expanded=True):
+                with st.expander("See how we calculate the emotion", expanded=explain_expanded_default):
                     st.markdown(
                     "1. Valence → measures whether a review leans positive or negative "
                     "(pleasant ↔ unpleasant).\n"
@@ -1518,7 +1523,7 @@ def render_analysis_results(
                                 ],
                             )
                             .add_params(pick)
-                            .properties(width="container", height=360)
+                            .properties(width="container", height=va_overall_chart_height)
                         )
                         event = st.altair_chart(
                             points_chart,
@@ -1540,7 +1545,7 @@ def render_analysis_results(
                     else:
                         st.scatter_chart(df_va, x="valence", y="arousal", color="quadrant")
 
-                with st.expander("See more details breakdown", expanded=True):
+                with st.expander("See more details breakdown", expanded=breakdown_expanded_default):
                     mcols = st.columns(2)
                     with mcols[0]:
                         st.markdown("**VALENCE**")
@@ -1978,7 +1983,7 @@ def render_analysis_results(
                         )
                         model_emotion_conf = max(0.0, min(1.0, _safe_float(top_emotions[0][1], 0.0)))
 
-                with st.expander("See how we calculate the emotion", expanded=True):
+                with st.expander("See how we calculate the emotion", expanded=explain_expanded_default):
                     st.markdown(
                         "1. Valence → measures whether a review leans positive or negative "
                         "(pleasant ↔ unpleasant).\n"
@@ -2100,7 +2105,7 @@ def render_analysis_results(
                             )
 
                             chart = (hline + vline + lines + emotion_points + review_point + top10_labels).properties(
-                                width="container", height=420
+                                width="container", height=va_per_review_chart_height
                             )
                             st.altair_chart(chart, use_container_width=True)
                         else:
