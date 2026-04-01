@@ -34,6 +34,12 @@ def render_analysis_results(
     compact_top_spacing: bool = False,
 ):
     """Render topic + sentiment analysis results."""
+    is_hf_space = bool(
+        os.getenv("SPACE_ID")
+        or os.getenv("SPACE_HOST")
+        or os.getenv("SPACE_AUTHOR_NAME")
+        or os.getenv("SPACE_REPO_NAME")
+    )
     if show_section_heading:
         st.markdown("---\n### Preview analysis")
     elif compact_top_spacing:
@@ -245,6 +251,19 @@ def render_analysis_results(
         """,
         unsafe_allow_html=True,
     )
+    if is_hf_space:
+        st.markdown(
+            """
+            <style>
+              div[data-testid="stExpanderDetails"] {
+                max-height: min(68vh, 760px);
+                overflow-y: auto;
+                padding-right: 4px;
+              }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
     if not show_overall and not show_per_review:
         return
 
@@ -278,7 +297,6 @@ def render_analysis_results(
 
     has_discrete = bool(reviews and len(per_review_discrete) == len(reviews))
     has_va = bool(reviews and len(per_review_va) == len(reviews))
-    is_hf_space = bool(os.getenv("SPACE_ID"))
     va_overall_chart_height = 300 if is_hf_space else 360
     va_per_review_chart_height = 340 if is_hf_space else 420
     explain_expanded_default = not is_hf_space
