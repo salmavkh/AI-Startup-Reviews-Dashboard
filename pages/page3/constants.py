@@ -26,6 +26,13 @@ DEFAULTS = {
 
 PAGE_CSS = """
 <style>
+  :root {
+    --search3-card-h: 76px;
+    --search3-logo-sz: 32px;
+    --search3-left-pad: 56px;
+    --search3-gap-y: -10px;
+  }
+
   .field-title {
     font-size: 16px;
     font-weight: 400;
@@ -38,47 +45,111 @@ PAGE_CSS = """
     margin: 0 0 10px 0;
   }
 
-  .result-option-card {
-    border: 1px solid rgba(0, 0, 0, 0.12);
-    border-radius: 10px;
-    padding: 10px;
-    margin-bottom: 10px;
-    background: #ffffff;
-  }
-
-  .result-option-card.selected {
-    border: 2px solid #000000;
-    padding: 9px;
-  }
-
-  .result-option-row {
+  /* Dot-only selectors: no button border/background box */
+  div[class*="st-key-search3_pick_dot_"],
+  div[class*="st-key-search3_pick_none"] {
+    height: var(--search3-card-h);
+    margin: 0 0 var(--search3-gap-y) 0 !important;
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: center;
   }
 
-  .result-option-logo {
-    width: 40px;
-    height: 40px;
-    flex: 0 0 40px;
+  div[class*="st-key-search3_pick_dot_"] button,
+  div[class*="st-key-search3_pick_none"] button {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    color: #2f3442 !important;
+    font-size: 20px !important;
+    line-height: 1 !important;
   }
 
-  .result-option-name {
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.2;
+  div[class*="st-key-search3_pick_dot_"] button:hover,
+  div[class*="st-key-search3_pick_dot_"] button:focus,
+  div[class*="st-key-search3_pick_none"] button:hover,
+  div[class*="st-key-search3_pick_none"] button:focus {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
   }
 
-  .result-option-subtitle {
-    font-size: 12px;
-    color: #6f6f6f;
-    margin-top: 2px;
+  /* Clickable result cards (single click, uniform size). */
+  div[class*="st-key-search3_pick_card_"],
+  div[class*="st-key-search3_pick_none_card"] {
+    margin: 0 0 var(--search3-gap-y) 0 !important;
   }
 
-  .none-option {
-    font-size: 16px;
-    line-height: 1.2;
-    margin-top: 2px;
+  div[class*="st-key-search3_pick_dot_"] > div[data-testid="stButton"],
+  div[class*="st-key-search3_pick_none"] > div[data-testid="stButton"],
+  div[class*="st-key-search3_pick_card_"] > div[data-testid="stButton"],
+  div[class*="st-key-search3_pick_none_card"] > div[data-testid="stButton"] {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  div[data-testid="stHorizontalBlock"]:has(div[class*="st-key-search3_pick_card_"]),
+  div[data-testid="stHorizontalBlock"]:has(div[class*="st-key-search3_pick_none_card"]) {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button,
+  div[class*="st-key-search3_pick_none_card"] button {
+    text-align: left !important;
+    white-space: pre-line !important;
+    line-height: 1.1 !important;
+    font-size: 12px !important;
+    min-height: var(--search3-card-h) !important;
+    height: var(--search3-card-h) !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    border-radius: 10px !important;
+    padding: 6px 10px !important;
+    border: 1px solid rgba(0, 0, 0, 0.12) !important;
+    background: #ffffff !important;
+    color: #2f3442 !important;
+    box-shadow: none !important;
+  }
+
+  div[class*="st-key-search3_pick_none_card"] button {
+    position: relative !important;
+    padding-left: var(--search3-left-pad) !important;
+  }
+
+  div[class*="st-key-search3_pick_none_card"] button::before {
+    content: "";
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    width: var(--search3-logo-sz);
+    height: var(--search3-logo-sz);
+    border-radius: 8px;
+    transform: translateY(-50%);
+    background: transparent;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button[kind="primary"],
+  div[class*="st-key-search3_pick_none_card"] button[kind="primary"] {
+    border: 2px solid #000000 !important;
+    background: #ffffff !important;
+    color: #2f3442 !important;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button:hover,
+  div[class*="st-key-search3_pick_none_card"] button:hover {
+    border-color: rgba(0, 0, 0, 0.24) !important;
+    background: #ffffff !important;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button[kind="primary"]:hover,
+  div[class*="st-key-search3_pick_none_card"] button[kind="primary"]:hover {
+    border-color: #000000 !important;
+    background: #ffffff !important;
   }
 
   .company-header {

@@ -12,7 +12,7 @@ from helpers.search_ui_helpers import (
 )
 from helpers.sidebar_nav import render_sidebar_nav
 from pages.page3.analysis import is_analysis_stale, run_page_analysis
-from pages.page3.components import render_option_card
+from pages.page3.components import render_none_option, render_option_card
 from pages.page3.constants import DIRECT_LINK_PLATFORMS, PAGE_CSS
 from pages.page3.state import initialize_state
 from pages.page3.workflow import handle_primary_action, handle_submit_action
@@ -83,31 +83,35 @@ def _render_left_panel() -> None:
             unsafe_allow_html=True,
         )
         results = st.session_state.search3_results or []
-
-        if results:
-            rows = [results[i:i + 2] for i in range(0, len(results), 2)]
-            for row in rows:
-                row_cols = st.columns(2, gap="large")
-                for ix, item in enumerate(row):
-                    with row_cols[ix]:
-                        render_option_card(item)
-        else:
+        if not results:
             st.info("No results found. Try a different company/app name.")
 
-        none_selected = bool(st.session_state.get("search3_none_selected"))
-        none_cols = st.columns([1, 11], gap="small")
-        with none_cols[0]:
-            if st.button("●" if none_selected else "○", key="search3_pick_none", use_container_width=True):
-                st.session_state.search3_selected_result = None
-                st.session_state.search3_none_selected = True
-        with none_cols[1]:
-            selected_class = " selected" if none_selected else ""
-            st.markdown(
-                f"<div class='result-option-card{selected_class}'><div class='none-option'>None of those</div></div>",
-                unsafe_allow_html=True,
-            )
+        options = list(results)
+        options.append(
+            {
+                "id": "__none__",
+                "_none_option": True,
+            }
+        )
+        split_index = (len(options) + 1) // 2
+        left_options = options[:split_index]
+        right_options = options[split_index:]
 
-        if none_selected:
+        grid_cols = st.columns(2, gap="small")
+        with grid_cols[0]:
+            for item in left_options:
+                if item.get("_none_option"):
+                    render_none_option()
+                else:
+                    render_option_card(item)
+        with grid_cols[1]:
+            for item in right_options:
+                if item.get("_none_option"):
+                    render_none_option()
+                else:
+                    render_option_card(item)
+
+        if st.session_state.get("search3_none_selected"):
             st.markdown('<div class="field-title">Paste the app/company link</div>', unsafe_allow_html=True)
             st.text_input(
                 "Paste the app/company link",
