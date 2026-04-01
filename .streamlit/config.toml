@@ -4,3 +4,5 @@
 address = "localhost"
 port = 8501
 headless = false
+maxUploadSize = 300
+maxMessageSize = 300

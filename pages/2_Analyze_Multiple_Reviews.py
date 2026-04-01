@@ -11,6 +11,7 @@ render_sidebar_nav()
 TOPIC_EXAMPLES_PER_THEME = 2
 KEYWORDS_PER_REVIEW = 5
 KEYWORDS_OVERALL = 20
+CSV_UPLOAD_MAX_MB = 300
 
 st.markdown(
     """
@@ -89,6 +90,7 @@ uploaded_file = st.file_uploader(
     "Upload a CSV with one header and one review per row.",
     type=["csv"],
     accept_multiple_files=False,
+    max_upload_size=CSV_UPLOAD_MAX_MB,
     label_visibility="collapsed",
 )
 
