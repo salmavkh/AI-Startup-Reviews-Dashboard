@@ -1622,12 +1622,12 @@ def render_analysis_results(
                     )
 
                     st.markdown("**VA quadrants (count of reviews)**")
-                    st.caption(
-                        "HVHA = High Valence + High Arousal · "
-                        "HVLA = High Valence + Low Arousal · "
-                        "LVHA = Low Valence + High Arousal · "
-                        "LVLA = Low Valence + Low Arousal"
-                    )
+                    quadrant_bullets = [
+                        "HVHA (High Valence + High Arousal) reflects excited/enthusiastic positive feelings",
+                        "HVLA (High Valence + Low Arousal) reflects calm/content positive feelings",
+                        "LVHA (Low Valence + High Arousal) reflects stressed/angry negative feelings",
+                        "LVLA (Low Valence + Low Arousal) reflects sad/tired negative feelings",
+                    ]
 
                     q_cols = st.columns(4, gap="small")
                     for idx_q, q in enumerate(quadrant_order):
@@ -1652,6 +1652,35 @@ def render_analysis_results(
                         st.altair_chart(q_chart, use_container_width=True)
                     else:
                         st.bar_chart(q_df, x="quadrant", y="count", use_container_width=True)
+                    st.markdown(
+                        "<p style='color: #000000; margin-top: 0.4rem; margin-bottom: 0.2rem;'>"
+                        "These VA quadrants group reviews by emotional tone:"
+                        "</p>",
+                        unsafe_allow_html=True,
+                    )
+                    quad_desc_cols = st.columns(2, gap="large")
+                    left_bullets = "".join(f"<li>{item}</li>" for item in quadrant_bullets[:2])
+                    right_bullets = "".join(f"<li>{item}</li>" for item in quadrant_bullets[2:])
+                    with quad_desc_cols[0]:
+                        st.markdown(
+                            "<ul style='color: #000000; margin-top: 0.1rem; margin-bottom: 0; padding-left: 1.2rem;'>"
+                            f"{left_bullets}"
+                            "</ul>",
+                            unsafe_allow_html=True,
+                        )
+                    with quad_desc_cols[1]:
+                        st.markdown(
+                            "<ul style='color: #000000; margin-top: 0.1rem; margin-bottom: 0; padding-left: 1.2rem;'>"
+                            f"{right_bullets}"
+                            "</ul>",
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown(
+                        "<p style='color: #000000; margin-top: 0.3rem;'>"
+                        "The review count in each quadrant shows how often each emotional state appears in your data."
+                        "</p>",
+                        unsafe_allow_html=True,
+                    )
 
             if emo_pct or has_va:
                 detail_cols = st.columns(2, gap="large")
