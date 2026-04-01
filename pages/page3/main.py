@@ -53,6 +53,9 @@ def _render_left_panel() -> None:
             key="search3_query_input",
         )
 
+    for msg in st.session_state.search3_errors:
+        st.warning(msg)
+
     st.write("")
     st.markdown('<div class="field-title">How many reviews?</div>', unsafe_allow_html=True)
     num_reviews = int(
@@ -259,9 +262,6 @@ def render_page() -> None:
 
     with left_panel:
         _render_left_panel()
-
-    for msg in st.session_state.search3_errors:
-        st.warning(msg)
 
     with right_panel:
         _render_right_panel()

@@ -65,7 +65,7 @@ def render_option_card(candidate: dict) -> None:
         )
 
     with card_cols[1]:
-        label = raw_name if not subtitle else f"{raw_name}\n{subtitle}"
+        label = raw_name if not subtitle else f"{raw_name}\n`{subtitle}`"
         st.button(
             label,
             key=f"search3_pick_card_{key_suffix}",

@@ -327,11 +327,6 @@ def process_search_results(candidates: list, platform: str) -> list:
         }
         if c.get("package"):
             ui["package"] = c.get("package")
-            if platform == "Google Play Store":
-                pkg = str(c.get("package") or "").strip()
-                if pkg:
-                    subtitle = str(ui.get("subtitle") or "").strip()
-                    ui["subtitle"] = f"{subtitle} · {pkg}" if subtitle else pkg
         if c.get("app_id"):
             ui["app_id"] = c.get("app_id")
         if c.get("g2_slug"):

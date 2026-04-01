@@ -27,7 +27,7 @@ DEFAULTS = {
 PAGE_CSS = """
 <style>
   :root {
-    --search3-card-h: 76px;
+    --search3-card-h: 84px;
     --search3-logo-sz: 32px;
     --search3-left-pad: 56px;
     --search3-gap-y: -10px;
@@ -48,7 +48,8 @@ PAGE_CSS = """
   /* Dot-only selectors: no button border/background box */
   div[class*="st-key-search3_pick_dot_"],
   div[class*="st-key-search3_pick_none"] {
-    height: var(--search3-card-h);
+    min-height: var(--search3-card-h);
+    height: auto;
     margin: 0 0 var(--search3-gap-y) 0 !important;
     display: flex;
     align-items: center;
@@ -100,10 +101,12 @@ PAGE_CSS = """
   div[class*="st-key-search3_pick_none_card"] button {
     text-align: left !important;
     white-space: pre-line !important;
-    line-height: 1.1 !important;
-    font-size: 12px !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+    line-height: 1.2 !important;
+    font-size: 16px !important;
     min-height: var(--search3-card-h) !important;
-    height: var(--search3-card-h) !important;
+    height: auto !important;
     box-sizing: border-box !important;
     display: flex !important;
     align-items: center !important;
@@ -114,6 +117,20 @@ PAGE_CSS = """
     background: #ffffff !important;
     color: #2f3442 !important;
     box-shadow: none !important;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button p,
+  div[class*="st-key-search3_pick_none_card"] button p {
+    margin: 0 !important;
+  }
+
+  div[class*="st-key-search3_pick_card_"] button code {
+    background: transparent !important;
+    color: #8f96a3 !important;
+    font-size: 12px !important;
+    padding: 0 !important;
+    font-family: inherit !important;
+    font-weight: 400 !important;
   }
 
   div[class*="st-key-search3_pick_none_card"] button {

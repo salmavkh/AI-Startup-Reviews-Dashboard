@@ -83,6 +83,92 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
 
+def _parse_install_count(raw_value: Any) -> int:
+    """Parse installs values like 500000, '5,000,000+', or '1.2M+'."""
+    if raw_value is None:
+        return 0
+
+    if isinstance(raw_value, (int, float)):
+        try:
+            return max(0, int(raw_value))
+        except Exception:
+            return 0
+
+    s = str(raw_value or "").strip().lower()
+    if not s:
+        return 0
+
+    cleaned = s.replace(",", "").replace("+", "").strip()
+    m = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*([kmb])$", cleaned)
+    if m:
+        try:
+            base = float(m.group(1))
+            suffix = m.group(2)
+            mult = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}.get(suffix, 1)
+            return max(0, int(base * mult))
+        except Exception:
+            return 0
+
+    digits = re.sub(r"[^0-9]", "", cleaned)
+    if not digits:
+        return 0
+    try:
+        return max(0, int(digits))
+    except Exception:
+        return 0
+
+
+def _extract_hit_install_count(hit: Dict[str, Any]) -> int:
+    for key in ("realInstalls", "minInstalls", "installs"):
+        parsed = _parse_install_count(hit.get(key))
+        if parsed > 0:
+            return parsed
+    return 0
+
+
+def _search_google_play_web_hits(
+    query: str,
+    limit: int = 20,
+    country: str = "us",
+    lang: str = "en",
+) -> List[Dict[str, str]]:
+    """Search Play Store web page and return package/title hits."""
+    out: List[Dict[str, str]] = []
+    if not query:
+        return out
+
+    url = (
+        "https://play.google.com/store/search?"
+        f"q={urllib.parse.quote(query)}&c=apps&hl={urllib.parse.quote(lang)}&gl={urllib.parse.quote(country.upper())}"
+    )
+    resp = _safe_get(url, headers={"User-Agent": "Mozilla/5.0"})
+    if not resp or resp.status_code != 200:
+        return out
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        m = re.search(r"details\?id=([\w\.\-]+)", href)
+        if not m:
+            continue
+        pkg = m.group(1)
+        if pkg in seen or not _is_valid_package(pkg):
+            continue
+        seen.add(pkg)
+
+        title = (a.get("aria-label") or "").strip()
+        if not title:
+            div = a.find("div")
+            if div is not None:
+                title = div.get_text(strip=True)
+
+        out.append({"title": title or pkg, "package": pkg})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _resolve_package_by_title_developer(
     title: str,
     developer_or_genre: str,
@@ -108,18 +194,58 @@ def _resolve_package_by_title_developer(
             hits = gp_search(q, lang=lang, country=country, n_hits=15)
         except Exception:
             continue
+
+        exact_with_pkg: List[tuple[int, str]] = []
+        any_with_pkg: List[tuple[int, str]] = []
+        saw_exact_without_pkg = False
+
         for h in hits or []:
-            pkg = _extract_package_from_search_hit(h or {})
+            row = h or {}
+            cand_name = _norm_name(str(row.get("title") or ""))
+            pkg = _extract_package_from_search_hit(row)
+            installs = _extract_hit_install_count(row)
+
+            if target_name and cand_name == target_name and not pkg:
+                saw_exact_without_pkg = True
+
             if not pkg:
                 continue
-            cand_name = _norm_name(str(h.get("title") or ""))
+
+            rec = (installs, pkg)
+            any_with_pkg.append(rec)
             if target_name and cand_name == target_name:
-                return pkg
-        # relaxed fallback: first valid package from same query
-        for h in hits or []:
-            pkg = _extract_package_from_search_hit(h or {})
-            if pkg:
-                return pkg
+                exact_with_pkg.append(rec)
+
+        if exact_with_pkg:
+            best_exact_pkg = max(exact_with_pkg, key=lambda x: (x[0], x[1]))[1]
+            if not saw_exact_without_pkg:
+                return best_exact_pkg
+
+            # If the exact-title winner from gp_search is missing appId, use web
+            # ranking to recover the canonical package (e.g., com.instagram.android).
+            web_hits = _search_google_play_web_hits(q, limit=20, country=country, lang=lang)
+            for wh in web_hits:
+                web_pkg = wh.get("package")
+                web_title = _norm_name(str(wh.get("title") or ""))
+                if web_pkg and target_name and web_title == target_name:
+                    return web_pkg
+            return best_exact_pkg
+
+        if saw_exact_without_pkg:
+            web_hits = _search_google_play_web_hits(q, limit=20, country=country, lang=lang)
+            for wh in web_hits:
+                web_pkg = wh.get("package")
+                web_title = _norm_name(str(wh.get("title") or ""))
+                if web_pkg and target_name and web_title == target_name:
+                    return web_pkg
+            if web_hits:
+                first_pkg = web_hits[0].get("package")
+                if first_pkg:
+                    return first_pkg
+
+        if any_with_pkg:
+            return max(any_with_pkg, key=lambda x: (x[0], x[1]))[1]
+
     return None
 
 
@@ -192,25 +318,16 @@ def search_google_play(query: str, limit: int = 5, country: str = "us", lang: st
             pass
 
     # Fallback: try the Play Store web lookup
-    url = f"https://play.google.com/store/search?q={urllib.parse.quote(query)}&c=apps"
-    resp = _safe_get(url, headers={"User-Agent": "Mozilla/5.0"})
-    if not resp or resp.status_code != 200:
-        return out
-    soup = BeautifulSoup(resp.text, "html.parser")
-    seen = set()
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        m = re.search(r"details\?id=([\w\.\-]+)", href)
-        if not m:
-            continue
-        pkg = m.group(1)
-        if pkg in seen or not _is_valid_package(pkg):
-            continue
-        seen.add(pkg)
-        title = a.get("aria-label") or (a.find("div") or {}).get_text(strip=True) or pkg
-        out.append({"name": title, "subtitle": "Google Play app", "logo": None, "package": pkg})
-        if len(out) >= limit:
-            break
+    web_hits = _search_google_play_web_hits(query, limit=limit, country=country, lang=lang)
+    for hit in web_hits:
+        out.append(
+            {
+                "name": hit.get("title") or hit.get("package") or query,
+                "subtitle": "Google Play app",
+                "logo": None,
+                "package": hit.get("package"),
+            }
+        )
     return out
 
 
