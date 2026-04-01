@@ -111,6 +111,21 @@ st.markdown(
         text-decoration: underline;
     }
 
+    .disclaimer-box {
+        margin: 0 0 26px 0;
+        padding: 12px 14px 14px 14px;
+        border: 1px solid #c9d2dd;
+        background: #f6f8fb;
+        border-radius: 10px;
+        font-size: 15px;
+        line-height: 1.45;
+    }
+
+    .disclaimer-title {
+        font-weight: 700;
+        margin-bottom: 6px;
+    }
+
     .stButton > button[kind="secondary"] {
         background-color: transparent;
         color: var(--text);
@@ -192,6 +207,19 @@ with st.container():
 with st.container():
     st.markdown('<div class="content-anchor"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
+
+    st.markdown(
+        """
+        <div class="disclaimer-box">
+            <div class="disclaimer-title">ⓘ Disclaimer</div>
+            This dashboard provides automated sentiment, emotion, and topic insights for informational use only.
+            The models are trained on AI startup reviews and are best suited to that domain, but they can also support analysis of reviews from other app categories.
+            Model outputs may be inaccurate, incomplete, or biased, and should be interpreted with human judgment.
+            Please use this tool responsibly and do not rely on it as the sole basis for important decisions.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div class="body-header"><strong>Models We Use</strong></div>', unsafe_allow_html=True)
     st.markdown(
