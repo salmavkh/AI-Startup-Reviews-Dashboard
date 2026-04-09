@@ -1434,8 +1434,8 @@ def render_analysis_results(
                             {
                                 "review_idx": i,
                                 "review_label": f"Review {i + 1}",
-                                "title": str(review.get("title") or "(no title)"),
-                                "review": _short_text(review.get("content") or ""),
+                                "title": str(review.get("title") or "").strip(),
+                                "review": str(review.get("content") or review.get("title") or "").strip(),
                                 "valence": _safe_float(point.get("valence", 0.0)),
                                 "arousal": _safe_float(point.get("arousal", 0.0)),
                                 "quadrant": str(point.get("quadrant") or ""),
@@ -2137,7 +2137,17 @@ def render_analysis_results(
                                 )
                             )
 
-                            review_df = pd.DataFrame([{"label": "Review", "valence": v, "arousal": a}])
+                            review_df = pd.DataFrame(
+                                [
+                                    {
+                                        "label": "Review",
+                                        "title": str(r.get("title") or "").strip(),
+                                        "review": str(r.get("content") or r.get("title") or "").strip(),
+                                        "valence": v,
+                                        "arousal": a,
+                                    }
+                                ]
+                            )
                             review_point = (
                                 alt.Chart(review_df)
                                 .mark_point(shape="diamond", size=180, color="#1f1f1f")
@@ -2146,6 +2156,8 @@ def render_analysis_results(
                                     y=alt.Y("arousal:Q", scale=alt.Scale(domain=[-1, 1])),
                                     tooltip=[
                                         "label:N",
+                                        "title:N",
+                                        "review:N",
                                         alt.Tooltip("valence:Q", format=".3f"),
                                         alt.Tooltip("arousal:Q", format=".3f"),
                                     ],

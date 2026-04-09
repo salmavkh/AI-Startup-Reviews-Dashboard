@@ -377,7 +377,7 @@ def render_review_preview(fetched: list, platform: str):
     st.markdown("---\n### Review preview (showing up to 5)")
 
     for it in fetched:
-        title = it.get("title") or "(no title)"
+        title = str(it.get("title") or "").strip()
         content = (it.get("content") or "").strip()
         snippet = content[:320] + ("…" if len(content) > 320 else "")
         rating = it.get("rating")
