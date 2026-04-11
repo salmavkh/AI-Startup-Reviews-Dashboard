@@ -2068,6 +2068,14 @@ def render_analysis_results(
                         )
                         df_e = pd.DataFrame(rows)
                         if alt is not None:
+                            emotion_tooltip = [
+                                alt.Tooltip("emotion:N", title="emotion"),
+                                alt.Tooltip("emotion_valence:Q", title="valence", format=".3f"),
+                                alt.Tooltip("emotion_arousal:Q", title="arousal", format=".3f"),
+                                alt.Tooltip("distance:Q", title="distance", format=".3f"),
+                                alt.Tooltip("similarity:Q", title="similarity", format=".3f"),
+                                alt.Tooltip("rank:Q", title="rank"),
+                            ]
                             axis_df = pd.DataFrame([{"x": 0.0, "y": 0.0}])
                             hline = alt.Chart(axis_df).mark_rule(color="#d0d0d0").encode(y="y:Q")
                             vline = alt.Chart(axis_df).mark_rule(color="#d0d0d0").encode(x="x:Q")
@@ -2100,12 +2108,7 @@ def render_analysis_results(
                                         alt.value(0.95),
                                         alt.value(0.25),
                                     ),
-                                    tooltip=[
-                                        "emotion:N",
-                                        alt.Tooltip("distance:Q", format=".3f"),
-                                        alt.Tooltip("similarity:Q", format=".3f"),
-                                        "rank:Q",
-                                    ],
+                                    tooltip=emotion_tooltip,
                                 )
                             )
 
@@ -2125,14 +2128,7 @@ def render_analysis_results(
                                         alt.value(1.0),
                                         alt.value(0.55),
                                     ),
-                                    tooltip=[
-                                        "emotion:N",
-                                        alt.Tooltip("emotion_valence:Q", format=".3f"),
-                                        alt.Tooltip("emotion_arousal:Q", format=".3f"),
-                                        alt.Tooltip("distance:Q", format=".3f"),
-                                        alt.Tooltip("similarity:Q", format=".3f"),
-                                        "rank:Q",
-                                    ],
+                                    tooltip=emotion_tooltip,
                                 )
                             )
 
@@ -2143,6 +2139,7 @@ def render_analysis_results(
                                     x=alt.X("emotion_valence:Q", scale=alt.Scale(domain=[-1, 1])),
                                     y=alt.Y("emotion_arousal:Q", scale=alt.Scale(domain=[-1, 1])),
                                     text="emotion:N",
+                                    tooltip=emotion_tooltip,
                                 )
                             )
 
@@ -2178,8 +2175,22 @@ def render_analysis_results(
                             )
                             st.altair_chart(chart, use_container_width=True)
                         else:
-                            scatter_df = df_e[["emotion_valence", "emotion_arousal", "emotion"]]
-                            st.scatter_chart(scatter_df, x="emotion_valence", y="emotion_arousal")
+                            scatter_df = df_e[
+                                [
+                                    "emotion_valence",
+                                    "emotion_arousal",
+                                    "emotion",
+                                    "distance",
+                                    "similarity",
+                                    "rank",
+                                ]
+                            ].rename(
+                                columns={
+                                    "emotion_valence": "valence",
+                                    "emotion_arousal": "arousal",
+                                }
+                            )
+                            st.scatter_chart(scatter_df, x="valence", y="arousal")
 
                         top10 = df_e[df_e["is_top10"]][["rank", "emotion", "distance", "similarity"]]
                         detail_cols = st.columns(2, gap="large")

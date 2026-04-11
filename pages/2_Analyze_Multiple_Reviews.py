@@ -150,6 +150,7 @@ for msg in st.session_state.multi_errors:
 
 if st.session_state.multi_result:
     res = st.session_state.multi_result
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
     render_analysis_results(
         res["analysis"],
         show_section_heading=False,
