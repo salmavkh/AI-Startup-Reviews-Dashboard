@@ -82,7 +82,7 @@ def _render_left_panel() -> None:
     if st.session_state.search3_search_clicked:
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-title">Select your company from this possible results:</div>',
+            '<div class="section-title">Select your company from these possible results:</div>',
             unsafe_allow_html=True,
         )
         results = st.session_state.search3_results or []
