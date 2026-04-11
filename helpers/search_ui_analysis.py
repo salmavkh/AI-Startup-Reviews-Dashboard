@@ -227,6 +227,15 @@ def render_analysis_results(
             margin-bottom: 16px;
             width: 100%;
           }
+          div[data-testid="stTabs"] [data-baseweb="tab-list"] button[role="tab"] {
+            min-height: 46px;
+            padding-left: 18px;
+            padding-right: 18px;
+          }
+          div[data-testid="stTabs"] [data-baseweb="tab-list"] button[role="tab"] p {
+            font-size: 1.35rem;
+            font-weight: 600;
+          }
           div[data-testid="stPopover"] button {
             background: transparent !important;
             border: none !important;
