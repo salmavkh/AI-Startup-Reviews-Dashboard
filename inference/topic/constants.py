@@ -5,7 +5,7 @@ import os
 TOPIC_MODELS_DIR = "artifacts/bertopic_by_cluster"
 ALL_TOPIC_MODEL_PATH = "artifacts/bertopic_all_n30.model"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-ALL_EMBEDDING_MODEL_PATH = "artifacts/review_embedder_v1"
+ALL_EMBEDDING_MODEL_PATH = EMBEDDING_MODEL_NAME
 
 CLUSTER_TO_MODEL = {
     "Cluster 1 (AI-Charged Product/Service Providers)": os.path.join(

@@ -4,7 +4,6 @@ import streamlit as st
 from bertopic import BERTopic
 from sentence_transformers import SentenceTransformer
 
-from inference.model_assets import resolve_artifact_dir
 from inference.topic.constants import (
     ALL_TOPIC_MODEL_PATH,
     CLUSTER_TO_MODEL,
@@ -19,7 +18,7 @@ def _load_embedder() -> SentenceTransformer:
 
 @st.cache_resource
 def _load_embedder_all() -> SentenceTransformer:
-    return SentenceTransformer(resolve_artifact_dir("review_embedder_v1"))
+    return SentenceTransformer(EMBEDDING_MODEL_NAME)
 
 
 @st.cache_resource
