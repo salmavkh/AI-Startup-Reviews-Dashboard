@@ -229,7 +229,7 @@ with st.container():
         <ul>
             <li>For sentiment analysis, we use RoBERTa to classify reviews as positive or negative. This model achieved an F1-score of 97% and an accuracy of 97.2%.</li>
             <li>For emotion analysis, we use DistilBERT in two ways. One model estimates Valence (R<sup>2</sup> = 0.8237, MAE = 0.1197) and Arousal (R<sup>2</sup> = 0.6291, MAE = 0.1048). Another model predicts discrete 28 emotions and identifies the top 10 emotions with their intensity in each review (R<sup>2</sup> = 0.7480, MAE = 0.0092).</li>
-            <li>For topic modeling, we use BERTopic. The model achieved a coherence score of 0.840 (how semantically consistent each topic is), topic diversity of 0.428 (how distinct topics are from one another), and an outlier rate of 14.8% (the share of reviews not confidently assigned to a topic).</li>
+            <li>For topic modelling, we use BERTopic. Across the four startup clusters, it achieved a mean coherence score of 0.676 (a measure of how well the top words in each topic fit together).</li>
         </ul>
         </div>
         """,
